@@ -1,0 +1,118 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MollyPaw</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 侧边栏 -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo-area">
+        <img src="../assets/logo-placeholder.svg" alt="MollyPaw" class="logo-img">
+        <span class="logo-text">MollyPaw</span>
+      </div>
+      <button id="new-chat-btn" class="icon-btn" title="New Chat">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="sidebar-content">
+      <div class="chat-history" id="chat-history">
+        <div class="history-empty">No conversations yet</div>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <button id="settings-btn" class="sidebar-action-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        <span>Settings</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- 主聊天区域 -->
+  <main id="main">
+    <div class="chat-container" id="chat-container">
+      <!-- 欢迎信息 -->
+      <div class="welcome-screen" id="welcome-screen">
+        <img src="../assets/logo-placeholder.svg" alt="MollyPaw" class="welcome-logo">
+        <h1>Hello, I'm MollyPaw!</h1>
+        <p class="welcome-sub">Your AI, right at your paw.</p>
+        <div class="welcome-prompts">
+          <button class="prompt-chip" data-prompt="Help me write a Python script to sort files by extension">
+            <span class="prompt-icon">&#128221;</span>
+            <span>Write a Python script</span>
+          </button>
+          <button class="prompt-chip" data-prompt="Explain how PyWebView works under the hood">
+            <span class="prompt-icon">&#128161;</span>
+            <span>Explain PyWebView</span>
+          </button>
+          <button class="prompt-chip" data-prompt="What can you do as an AI agent?">
+            <span class="prompt-icon">&#129302;</span>
+            <span>What can you do?</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 消息区域 -->
+      <div class="messages" id="messages"></div>
+    </div>
+
+    <!-- 输入区域 -->
+    <div class="input-area">
+      <div class="input-wrapper">
+        <textarea id="user-input" placeholder="Ask MollyPaw anything..." rows="1"></textarea>
+        <button id="send-btn" class="send-btn" disabled>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+      <p class="input-hint">MollyPaw Beta 0.0.0.1</p>
+    </div>
+  </main>
+
+  <!-- 设置面板 -->
+  <div class="modal-overlay" id="settings-modal" style="display:none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button id="settings-close" class="icon-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="cfg-api-key">API Key</label>
+          <input type="password" id="cfg-api-key" placeholder="sk-...">
+        </div>
+        <div class="form-group">
+          <label for="cfg-base-url">Base URL</label>
+          <input type="text" id="cfg-base-url" placeholder="https://api.openai.com/v1">
+        </div>
+        <div class="form-group">
+          <label for="cfg-model">Model</label>
+          <input type="text" id="cfg-model" placeholder="gpt-3.5-turbo">
+        </div>
+        <div class="form-group">
+          <label for="cfg-temperature">Temperature</label>
+          <input type="number" id="cfg-temperature" min="0" max="2" step="0.1" placeholder="0.7">
+        </div>
+        <div class="form-actions">
+          <button id="cfg-save" class="btn-primary">Save</button>
+          <button id="cfg-cancel" class="btn-secondary">Cancel</button>
+        </div>
+        <div id="cfg-status" class="cfg-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
