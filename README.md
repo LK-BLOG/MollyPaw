@@ -94,14 +94,6 @@ MollyPaw/
 
 欢迎贡献！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 版本历史
-
-### Beta 0.0.0.1（开发中）
-- 初始项目结构
-- 基础品牌材料
-- PyWebView 窗口框架
-- 简单聊天界面
-
 ## 许可证
 
 GNU General Public License v3.0

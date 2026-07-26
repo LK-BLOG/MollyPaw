@@ -97,6 +97,6 @@ MollyPaw 支持扩展 LLM Provider。如果你想添加新的 Provider：
 ## 联系方式
 
 - GitHub: [LK-BLOG](https://github.com/LK-BLOG)
-- 邮箱: 542548450@qq.com
+- 邮箱: 542548450@qq.com&PyClaw@agent.qq.com&gunmu1145@gmail.com
 
 感谢你的贡献！就像摩尼一样，每一次陪伴都很重要。🐾
