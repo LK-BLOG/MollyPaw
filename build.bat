@@ -29,6 +29,7 @@ pyinstaller ^
     --windowed ^
     --noconfirm ^
     --clean ^
+    --icon "assets\logo.ico" ^
     --add-data "frontend;frontend" ^
     --add-data "assets;assets" ^
     --add-data "agent;agent" ^

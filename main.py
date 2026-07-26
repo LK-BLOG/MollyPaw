@@ -57,13 +57,22 @@ class MollyPawAPI:
 
 def get_frontend_path():
     """Get the path to the frontend directory."""
-    base = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, 'frontend', 'index.html')
 
 
 def get_tray_icon_image():
-    """Create a simple paw-orange icon for the system tray."""
-    return Image.new('RGBA', (64, 64), (212, 130, 58, 255))
+    """Load the paw-print icon for the system tray."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    icon_path = os.path.join(base, 'assets', 'logo.png')
+    if os.path.exists(icon_path):
+        return Image.open(icon_path).convert('RGBA').resize((64, 64), Image.LANCZOS)
+    return Image.new('RGBA', (64, 64), (139, 94, 60, 255))
 
 
 def create_tray_icon(window):

@@ -10,3 +10,10 @@
   <!-- 右趾头 -->
   <ellipse cx="135" cy="75" rx="16" ry="18" fill="#8B5E3C"/>
 </svg>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <ellipse cx="100" cy="125" rx="38" ry="32" fill="#8B5E3C"/>
+  <ellipse cx="65" cy="75" rx="16" ry="18" fill="#A06E46"/>
+  <ellipse cx="100" cy="60" rx="16" ry="18" fill="#A06E46"/>
+  <ellipse cx="135" cy="75" rx="16" ry="18" fill="#A06E46"/>
+</svg>

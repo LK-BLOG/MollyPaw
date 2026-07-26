@@ -1,7 +1,7 @@
 # MollyPaw 品牌指南
 
 ## 项目名称
-**MollyPaw** — 以你家小泰迪摩尼（Molly）命名的全平台 AI Agent 桌面客户端
+**MollyPaw** — 以作者家小泰迪摩尼（Molly）命名的全平台 AI Agent 桌面客户端
 
 ## 一句话 Slogan
 > **"Your AI, right at your paw."**
@@ -53,9 +53,7 @@ MollyPaw 是一款基于 **Python + PyWebView** 构建的轻量级 AI Agent 桌�
 - 整体风格温暖、亲切、像摩尼一样让人放松
 
 ## Logo 规划
-1. **现阶段**：使用临时占位 Logo（爪印图标，棕白配色）
-2. **待完成**：妈妈画摩尼头像 → 矢量化 SVG → 多尺寸适配
-3. **最终形态**：摩尼头像 Logo + "MollyPaw" 文字组合
+**现阶段**：使用临时占位 Logo（爪印图标，棕白配色）
 
 ## 字体建议
 - **标题**：圆体或无衬线字体（温暖感）

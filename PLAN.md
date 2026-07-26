@@ -42,11 +42,11 @@
 - [x] 错误处理和加载状态
 - [x] 系统托盘支持（pystray）
 - [x] 打包为可执行文件（Windows，PyInstaller）
-- [ ] GitHub 发布 Beta 0.0.0.1
+- [ x] GitHub 发布 Beta 0.0.0.1
 
 ## 目录结构
 
-`
+
 D:\MollyPaw Agent\
 ├── main.py                 # PyWebView 入口 + 系统托盘
 ├── build.bat               # Windows 打包脚本
@@ -71,9 +71,6 @@ D:\MollyPaw Agent\
 ├── README.md               # 项目说明
 ├── CONTRIBUTING.md         # 贡献指南
 └── PLAN.md                 # 本文件（开发计划）
-`
-
-## 技术细节
 
 ### PyWebView 窗口
 
@@ -124,6 +121,6 @@ webview.start()
 - 爪印橙 #D4823A — CTA 按钮
 
 ## 待办事项
-- [ ] 创建 GitHub 仓库 LK-BLOG/MollyPaw
+- [x] 创建 GitHub 仓库 LK-BLOG/MollyPaw
 
 *最后更新: 2026-07-26*
