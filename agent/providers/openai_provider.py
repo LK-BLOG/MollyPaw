@@ -1,4 +1,5 @@
 ﻿"""OpenAI-compatible LLM Provider."""
+import json
 import requests
 from agent.providers.base import BaseProvider
 
@@ -21,8 +22,8 @@ class OpenAIProvider(BaseProvider):
             "Content-Type": "application/json",
         }
 
-    def chat(self, messages: list) -> str:
-        """Non-streaming chat completion."""
+    def chat(self, messages: list, tools=None) -> dict:
+        """Chat completion. Returns a dict with either 'content' or 'tool_calls'."""
         if not self.api_key:
             raise ValueError("API key not configured. Please set it in Settings.")
 
@@ -32,16 +33,27 @@ class OpenAIProvider(BaseProvider):
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        if tools:
+            payload["tools"] = tools
 
         resp = requests.post(
             f"{self.base_url}/chat/completions",
             headers=self._headers(),
             json=payload,
-            timeout=60,
+            timeout=120,
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+
+        # Check if the model wants to call tools
+        if message.get("tool_calls"):
+            return {
+                "content": message.get("content"),
+                "tool_calls": message["tool_calls"],
+            }
+
+        return {"content": message.get("content", "")}
 
     def stream_chat(self, messages: list):
         """Streaming chat completion (yields text chunks)."""
@@ -61,7 +73,7 @@ class OpenAIProvider(BaseProvider):
             headers=self._headers(),
             json=payload,
             stream=True,
-            timeout=60,
+            timeout=120,
         )
         resp.raise_for_status()
 
@@ -71,7 +83,6 @@ class OpenAIProvider(BaseProvider):
             chunk = line[6:]
             if chunk.strip() == "[DONE]":
                 break
-            import json
             data = json.loads(chunk)
             delta = data["choices"][0].get("delta", {})
             content = delta.get("content", "")

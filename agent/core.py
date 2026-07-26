@@ -1,9 +1,21 @@
 ﻿"""MollyPaw Agent Core - Main agent logic."""
+import json
 from agent.providers.openai_provider import OpenAIProvider
+from agent.tools import default_registry
+
+
+SYSTEM_PROMPT = (
+    "你是 MollyPaw，一只聪明可爱的小泰迪贵宾犬 AI 助手。"
+    "你说话温柔友好，乐于帮助用户解决各种问题。"
+    "当用户需要读取文件、写入文件或浏览目录时，你会主动使用提供的工具来完成任务，"
+    "而不是只给出文字说明。请用中文回复。"
+)
+
+MAX_TOOL_ROUNDS = 10
 
 
 class AgentCore:
-    """Core agent that manages chat, history, and provider interaction."""
+    """Core agent that manages chat, history, tools, and provider interaction."""
 
     DEFAULT_CONFIG = {
         "api_key": "",
@@ -14,9 +26,10 @@ class AgentCore:
     }
 
     def __init__(self):
-        self.history = []
+        self.history = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.config = self._load_config()
         self.provider = self._create_provider()
+        self.tool_registry = default_registry
 
     def _load_config(self) -> dict:
         """Load config from file, falling back to defaults."""
@@ -25,7 +38,6 @@ class AgentCore:
         config = dict(self.DEFAULT_CONFIG)
         if os.path.exists(config_path):
             try:
-                import json
                 with open(config_path, 'r', encoding='utf-8') as f:
                     saved = json.load(f)
                 config.update(saved)
@@ -54,25 +66,54 @@ class AgentCore:
 
     def save_config(self, new_config: dict):
         """Save new configuration and refresh provider."""
-        import os, json
-        # Update config
+        import os
         for k, v in new_config.items():
             if k in self.DEFAULT_CONFIG:
                 self.config[k] = v
-        # Save to file
         config_path = os.path.join(os.path.dirname(__file__), '..', 'config.json')
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
-        # Refresh provider
         self.provider = self._create_provider()
 
     def chat(self, user_message: str) -> str:
-        """Send a message and get a response."""
+        """Send a message and get a response, executing tool calls as needed."""
         self.history.append({"role": "user", "content": user_message})
-        response = self.provider.chat(self.history)
-        self.history.append({"role": "assistant", "content": response})
-        return response
+        tools = self.tool_registry.get_schemas()
+
+        for _ in range(MAX_TOOL_ROUNDS):
+            result = self.provider.chat(self.history, tools=tools)
+
+            if result.get("tool_calls"):
+                # Record assistant turn with tool_calls (content may be None)
+                self.history.append({
+                    "role": "assistant",
+                    "content": result.get("content") or "",
+                    "tool_calls": result["tool_calls"],
+                })
+                # Execute every tool call and append results
+                for tc in result["tool_calls"]:
+                    func_name = tc["function"]["name"]
+                    try:
+                        arguments = json.loads(tc["function"]["arguments"])
+                    except (json.JSONDecodeError, KeyError):
+                        arguments = {}
+                    output = self.tool_registry.execute(func_name, arguments)
+                    self.history.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": str(output),
+                    })
+                # Loop again so the LLM can see tool results
+                continue
+
+            # No tool calls — this is the final text response
+            text = result.get("content", "")
+            self.history.append({"role": "assistant", "content": text})
+            return text
+
+        # Safety fallback if we exhaust tool rounds
+        return "(MollyPaw used too many tool calls and stopped.)"
 
     def clear_history(self):
-        """Clear chat history."""
-        self.history.clear()
+        """Clear chat history, keeping the system prompt."""
+        self.history = [{"role": "system", "content": SYSTEM_PROMPT}]
