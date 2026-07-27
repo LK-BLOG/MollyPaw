@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import threading
+import time
 import webview
 
 try:
@@ -23,6 +24,9 @@ class MollyPawAPI:
         self.window = None
         self.pet_window = None
         self.pet_state = "idle"  # idle | work | cry | sleep
+        self._last_activity = time.time()
+        self._idle_threshold = 30  # seconds before pet goes to sleep
+        self._sleep_timer_started = False
 
     def set_window(self, window):
         self.window = window
@@ -33,12 +37,20 @@ class MollyPawAPI:
     def send_message(self, message: str) -> str:
         """Send a user message to the agent and get a response."""
         self.pet_state = "work"
+        self._last_activity = time.time()
+        self._sleep_timer_started = False
+        self._sync_pet_state()
         try:
             response = self.agent.chat(message)
             self.pet_state = "idle"
+            self._last_activity = time.time()
+            self._sync_pet_state()
+            self._start_sleep_timer()
             return json.dumps({"ok": True, "response": response}, ensure_ascii=False)
         except Exception as e:
             self.pet_state = "cry"
+            self._sync_pet_state()
+            self._start_sleep_timer()
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
     def get_pet_state(self) -> str:
@@ -49,8 +61,36 @@ class MollyPawAPI:
         """Manually set pet state."""
         if state in ("idle", "work", "cry", "sleep"):
             self.pet_state = state
+            self._last_activity = time.time()
+            self._sync_pet_state()
             return json.dumps({"ok": True}, ensure_ascii=False)
         return json.dumps({"ok": False, "error": "Invalid state"}, ensure_ascii=False)
+
+    def _sync_pet_state(self):
+        """Push current state to the pet window via evaluate_js."""
+        if self.pet_window:
+            try:
+                self.pet_window.evaluate_js(
+                    "window.setPetState('" + self.pet_state + "');"
+                )
+            except Exception:
+                pass
+
+    def _start_sleep_timer(self):
+        """Start a background timer that puts the pet to sleep after idle timeout."""
+        def _check_sleep():
+            while True:
+                time.sleep(5)
+                elapsed = time.time() - self._last_activity
+                if elapsed >= self._idle_threshold and self.pet_state not in ("work", "sleep"):
+                    self.pet_state = "sleep"
+                    self._sync_pet_state()
+                    break
+
+        if not self._sleep_timer_started:
+            self._sleep_timer_started = True
+            t = threading.Thread(target=_check_sleep, daemon=True)
+            t.start()
 
     def get_config(self) -> str:
         """Get current configuration (API key status, model, etc.)."""
@@ -88,6 +128,33 @@ def get_pet_frontend_path():
     else:
         base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, 'frontend', 'pet.html')
+
+
+def get_pet_asset_dir():
+    """Get the path to the pet assets directory."""
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, 'assets', 'pet')
+
+
+def inject_pet_assets(pet_window):
+    """Inject asset file:// URIs into the pet window after page load."""
+    asset_dir = get_pet_asset_dir()
+    # WebView2 on Windows needs forward slashes in file:/// URIs
+    prefix = 'file:///' + asset_dir.replace('\\', '/')
+    try:
+        pet_window.evaluate_js(
+            "window.setPetAssets("
+            "'" + prefix + "/pet_idle.png',"
+            "'" + prefix + "/pet_work.png',"
+            "'" + prefix + "/pet_cry.png',"
+            "'" + prefix + "/pet_sleep.png'"
+            ");"
+        )
+    except Exception:
+        pass
 
 
 def get_tray_icon_image():
@@ -150,6 +217,18 @@ def main():
         resizable=False,
     )
     api.set_pet_window(pet_window)
+
+    # Inject asset paths once the pet page finishes loading
+    def on_pet_loaded():
+        # Slight delay to ensure JS is fully ready
+        def _do_inject():
+            time.sleep(0.3)
+            inject_pet_assets(pet_window)
+            # Start idle->sleep timer
+            api._start_sleep_timer()
+        threading.Thread(target=_do_inject, daemon=True).start()
+
+    pet_window.events.loaded += on_pet_loaded
 
     if HAS_TRAY:
         tray_icon = None

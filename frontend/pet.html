@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -31,7 +31,6 @@
       -webkit-app-region: no-drag;
     }
 
-    /* ---- ZZZ 睡觉动画 ---- */
     .pet-zzz {
       position: absolute;
       top: -10px;
@@ -52,36 +51,26 @@
     .pet-zzz span:nth-child(3) { font-size: 22px; margin-left: 4px; }
     .hidden { display: none !important; }
 
-    /* ---- 呼吸动画（睡觉时） ---- */
     @keyframes breathe {
       0%, 100% { transform: translate(-50%, -50%) scale(1); }
       50% { transform: translate(-50%, -50%) scale(1.05); }
     }
-    .pet-breathe {
-      animation: breathe 3s ease-in-out infinite;
-    }
+    .pet-breathe { animation: breathe 3s ease-in-out infinite; }
 
-    /* ---- 弹跳动画（空闲时） ---- */
     @keyframes bounce {
       0%, 100% { transform: translate(-50%, -50%); }
       50% { transform: translate(-50%, -55%); }
     }
-    .pet-bounce {
-      animation: bounce 1.5s ease-in-out infinite;
-    }
+    .pet-bounce { animation: bounce 1.5s ease-in-out infinite; }
 
-    /* ---- 单次弹跳（切换状态时） ---- */
     @keyframes bounceOnce {
       0% { transform: translate(-50%, -50%) scale(1); }
       30% { transform: translate(-50%, -50%) scale(1.1); }
       60% { transform: translate(-50%, -50%) scale(0.95); }
       100% { transform: translate(-50%, -50%) scale(1); }
     }
-    .pet-bounce-once {
-      animation: bounceOnce 0.5s ease;
-    }
+    .pet-bounce-once { animation: bounceOnce 0.5s ease; }
 
-    /* ---- 抖动动画（哭泣时） ---- */
     @keyframes shake {
       0%, 100% { transform: translate(-50%, -50%); }
       10% { transform: translate(calc(-50% - 3px), -50%); }
@@ -90,14 +79,9 @@
       40% { transform: translate(calc(-50% + 3px), -50%); }
       50% { transform: translate(calc(-50% - 2px), -50%); }
       60% { transform: translate(calc(-50% + 2px), -50%); }
-      70% { transform: translate(calc(-50% - 1px), -50%); }
-      80% { transform: translate(calc(-50% + 1px), -50%); }
     }
-    .pet-shake {
-      animation: shake 0.6s ease-in-out infinite;
-    }
+    .pet-shake { animation: shake 0.6s ease-in-out infinite; }
 
-    /* ---- 泪水 ---- */
     .pet-tears {
       position: absolute;
       top: 50px;
@@ -124,14 +108,9 @@
       0% { top: 5px; opacity: 0.9; }
       100% { top: 65px; opacity: 0; }
     }
-    .pet-shake .tear-drop.left {
-      animation: tearFall1 0.8s ease-in infinite;
-    }
-    .pet-shake .tear-drop.right {
-      animation: tearFall2 0.8s ease-in infinite 0.4s;
-    }
+    .pet-shake .tear-drop.left { animation: tearFall1 0.8s ease-in infinite; }
+    .pet-shake .tear-drop.right { animation: tearFall2 0.8s ease-in infinite 0.4s; }
 
-    /* ---- 翻书气泡（工作时） ---- */
     .pet-bubble {
       position: absolute;
       top: -40px;
@@ -153,21 +132,29 @@
       bottom: -6px;
       left: 50%;
       transform: translateX(-50%);
-      width: 0;
-      height: 0;
+      width: 0; height: 0;
       border-left: 6px solid transparent;
       border-right: 6px solid transparent;
       border-top: 6px solid #D2B48C;
     }
 
-    /* ---- 拖拽中的样式 ---- */
-    .pet-dragging {
-      cursor: grabbing !important;
-      transition: none !important;
+    .pet-dragging { cursor: grabbing !important; transition: none !important; }
+
+    /* debug overlay */
+    #debug-info {
+      position: fixed;
+      top: 0; left: 0;
+      font-size: 10px;
+      color: red;
+      background: rgba(255,255,255,0.8);
+      padding: 2px 4px;
+      z-index: 999;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
+  <div id="debug-info">loading...</div>
   <div id="pet-container">
     <div id="pet-bubble" class="pet-bubble hidden">
       <span id="pet-bubble-text"></span>
@@ -179,26 +166,27 @@
       <div class="tear-drop left"></div>
       <div class="tear-drop right"></div>
     </div>
-    <img id="pet-img" class="pet-img" src="../assets/pet/pet_idle.png" alt="MollyPaw" draggable="false">
+    <img id="pet-img" class="pet-img" alt="MollyPaw" draggable="false">
   </div>
 
   <script>
   (function () {
     "use strict";
 
-    var ASSETS = {
-      idle:  "../assets/pet/pet_idle.png",
-      work:  "../assets/pet/pet_work.png",
-      cry:   "../assets/pet/pet_cry.png",
-      sleep: "../assets/pet/pet_sleep.png",
-    };
+    var debugEl = document.getElementById("debug-info");
+    function log(msg) {
+      console.log("[Pet] " + msg);
+      debugEl.textContent = msg;
+    }
 
-    var BUBBLE_TEXTS = {
-      work: "认真翻书中~",
-      cry:  "API连不上了...呜呜",
-      sleep: "zzZ...",
-      idle: "",
-    };
+    log("location.href=" + window.location.href);
+
+    var ASSETS = {};
+    var currentState = "idle";
+    var isDragging = false;
+    var dragOffsetX = 0;
+    var dragOffsetY = 0;
+    var zzzTimer = null;
 
     var container = document.getElementById("pet-container");
     var imgEl     = document.getElementById("pet-img");
@@ -207,30 +195,40 @@
     var bubbleEl  = document.getElementById("pet-bubble");
     var bubbleTxt = document.getElementById("pet-bubble-text");
 
-    var currentState = "idle";
-    var isDragging = false;
-    var dragOffsetX = 0;
-    var dragOffsetY = 0;
-    var zzzTimer = null;
+    function api() {
+      return window.pywebview ? window.pywebview.api : null;
+    }
 
-    // ---- 状态切换 ----
+    // --- Backend will call this to set asset paths ---
+    window.setPetAssets = function(idle, work, cry, sleep) {
+      ASSETS = { idle: idle, work: work, cry: cry, sleep: sleep };
+      log("assets set! idle=" + idle);
+      setState("idle");
+    };
+
+    // --- Backend will call this to switch state ---
+    window.setPetState = function(state) {
+      if (ASSETS[state]) setState(state);
+    };
+
     function setState(state) {
-      if (!ASSETS[state] || state === currentState) return;
+      if (!ASSETS[state]) {
+        log("no asset for state: " + state);
+        return;
+      }
       currentState = state;
-
       imgEl.src = ASSETS[state];
+      log("state=" + state + " src=" + ASSETS[state]);
 
-      // 清除所有动画 class
       container.className = "";
       container.classList.add("pet-bounce-once");
       setTimeout(function () {
-        if (currentState === "idle") container.className = "";
-        else if (currentState === "work") container.className = "pet-bounce";
-        else if (currentState === "sleep") container.className = "pet-breathe";
-        else if (currentState === "cry") container.className = "pet-shake";
+        container.className = "";
+        if (state === "work") container.className = "pet-bounce";
+        else if (state === "sleep") container.className = "pet-breathe";
+        else if (state === "cry") container.className = "pet-shake";
       }, 500);
 
-      // ZZZ
       if (state === "sleep") {
         zzzEl.classList.remove("hidden");
         startZzz();
@@ -239,23 +237,17 @@
         stopZzz();
       }
 
-      // 泪水
-      if (state === "cry") {
-        tearsEl.classList.remove("hidden");
-      } else {
-        tearsEl.classList.add("hidden");
-      }
+      tearsEl.classList.toggle("hidden", state !== "cry");
 
-      // 气泡
       if (state === "cry" || state === "work") {
-        bubbleTxt.textContent = BUBBLE_TEXTS[state];
+        var texts = { work: "认真翻书中~", cry: "API连不上了...呜呜", sleep: "zzZ...", idle: "" };
+        bubbleTxt.textContent = texts[state];
         bubbleEl.classList.remove("hidden");
       } else {
         bubbleEl.classList.add("hidden");
       }
     }
 
-    // ---- ZZZ 动画 ----
     function startZzz() {
       stopZzz();
       var idx = 0;
@@ -274,7 +266,7 @@
       if (zzzTimer) { clearInterval(zzzTimer); zzzTimer = null; }
     }
 
-    // ---- 拖拽 ----
+    // --- Drag ---
     function onDown(cx, cy) {
       isDragging = false;
       var rect = container.getBoundingClientRect();
@@ -319,12 +311,7 @@
     }, { passive: false });
     document.addEventListener("touchend", onUp);
 
-    // ---- 后端通信 ----
-    function api() {
-      return window.pywebview ? window.pywebview.api : null;
-    }
-
-    // 轮询后端状态（每 1 秒检查一次）
+    // --- Poll backend state ---
     setInterval(function () {
       var a = api();
       if (!a) return;
@@ -332,15 +319,15 @@
         var raw = a.get_pet_state();
         if (raw) {
           var result = JSON.parse(raw);
-          if (result.state) setState(result.state);
+          if (result.state && result.state !== currentState) {
+            setState(result.state);
+          }
         }
       } catch (e) { /* ignore */ }
     }, 1000);
 
-    // ---- 初始化 ----
-    setState("idle");
+    log("pet ready, waiting for assets from backend...");
   })();
   </script>
 </body>
 </html>
-
