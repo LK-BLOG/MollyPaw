@@ -4,6 +4,7 @@ import sys
 import json
 import threading
 import time
+import urllib.parse
 import webview
 
 try:
@@ -34,6 +35,8 @@ class MollyPawAPI:
     def set_pet_window(self, pet_window):
         self.pet_window = pet_window
 
+    # -- Chat -----------------------------------------------------------------
+
     def send_message(self, message: str) -> str:
         """Send a user message to the agent and get a response."""
         self.pet_state = "work"
@@ -53,6 +56,8 @@ class MollyPawAPI:
             self._start_sleep_timer()
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
+    # -- Pet state ------------------------------------------------------------
+
     def get_pet_state(self) -> str:
         """Return current pet state for the pet window to poll."""
         return json.dumps({"state": self.pet_state}, ensure_ascii=False)
@@ -65,6 +70,42 @@ class MollyPawAPI:
             self._sync_pet_state()
             return json.dumps({"ok": True}, ensure_ascii=False)
         return json.dumps({"ok": False, "error": "Invalid state"}, ensure_ascii=False)
+
+    def get_pet_base_url(self) -> str:
+        """Return the base HTTP URL where pet images are served (unused, kept for compat)."""
+        return ""
+
+    def _pet_asset_url(self, filename: str) -> str:
+        """Build a file:/// URL for a pet asset image."""
+        path = os.path.join(_base_dir(), "assets", "pet", filename)
+        return "file:///" + urllib.parse.quote(path.replace("\\", "/"), safe="/:")
+
+    def _inject_pet_assets(self):
+        """Push pet image URLs into the pet window via evaluate_js.
+
+        This is a fire-and-forget one-way push — no heavy data through
+        the JS bridge, just four short file:/// URLs.
+        """
+        if not self.pet_window:
+            return
+        urls = {
+            "idle":  self._pet_asset_url("pet_idle.png"),
+            "work":  self._pet_asset_url("pet_work.png"),
+            "cry":   self._pet_asset_url("pet_cry.png"),
+            "sleep": self._pet_asset_url("pet_sleep.png"),
+        }
+        js = (
+            "window.setPetAssets("
+            "'" + urls["idle"] + "',"
+            "'" + urls["work"] + "',"
+            "'" + urls["cry"] + "',"
+            "'" + urls["sleep"] + "'"
+            ")"
+        )
+        try:
+            self.pet_window.evaluate_js(js)
+        except Exception as e:
+            print(f"[MollyPaw] _inject_pet_assets failed: {e}")
 
     def _sync_pet_state(self):
         """Push current state to the pet window via evaluate_js."""
@@ -92,6 +133,8 @@ class MollyPawAPI:
             t = threading.Thread(target=_check_sleep, daemon=True)
             t.start()
 
+    # -- Config ---------------------------------------------------------------
+
     def get_config(self) -> str:
         """Get current configuration (API key status, model, etc.)."""
         config = self.agent.get_config()
@@ -112,33 +155,37 @@ class MollyPawAPI:
         return json.dumps({"ok": True}, ensure_ascii=False)
 
 
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
 def _base_dir():
     """Return the project root (works for both dev and frozen builds)."""
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
 
 def get_frontend_path():
-    """Get the path to the frontend directory."""
-    return os.path.join(_base_dir(), 'frontend', 'index.html')
+    return os.path.join(_base_dir(), "frontend", "index.html")
 
 
 def get_pet_frontend_path():
-    """Get the path to the pet frontend page."""
-    return os.path.join(_base_dir(), 'frontend', 'pet.html')
+    return os.path.join(_base_dir(), "frontend", "pet.html")
 
+
+# ---------------------------------------------------------------------------
+# System tray
+# ---------------------------------------------------------------------------
 
 def get_tray_icon_image():
-    """Load the paw-print icon for the system tray."""
-    icon_path = os.path.join(_base_dir(), 'assets', 'logo.png')
+    icon_path = os.path.join(_base_dir(), "assets", "logo.png")
     if os.path.exists(icon_path):
-        return Image.open(icon_path).convert('RGBA').resize((64, 64), Image.LANCZOS)
-    return Image.new('RGBA', (64, 64), (139, 94, 60, 255))
+        return Image.open(icon_path).convert("RGBA").resize((64, 64), Image.LANCZOS)
+    return Image.new("RGBA", (64, 64), (139, 94, 60, 255))
 
 
 def create_tray_icon(window):
-    """Create the system tray icon with menu."""
     icon_image = get_tray_icon_image()
 
     def on_show(icon, item):
@@ -154,15 +201,19 @@ def create_tray_icon(window):
         pystray.MenuItem("Show MollyPaw", on_show, default=True),
         pystray.MenuItem("Quit", on_quit),
     )
-
     return pystray.Icon("MollyPaw", icon_image, "MollyPaw Agent", menu)
 
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def main():
     api = MollyPawAPI()
 
+    # Main chat window
     window = webview.create_window(
-        'MollyPaw',
+        "MollyPaw",
         get_frontend_path(),
         width=1000,
         height=700,
@@ -172,31 +223,37 @@ def main():
     )
     api.set_window(window)
 
-    # Create floating desktop pet window (transparent, frameless, always on top)
+    # Desktop pet window
     pet_window = webview.create_window(
-        'MollyPaw Pet',
+        "MollyPaw Pet",
         get_pet_frontend_path(),
         width=200,
         height=220,
         frameless=True,
-        transparent=True,
         on_top=True,
         js_api=api,
         resizable=False,
+        background_color="white",
     )
     api.set_pet_window(pet_window)
 
-    # Start idle->sleep timer after pet page loads
+    def on_pet_loaded():
+        """After the pet HTML finishes loading, inject image URLs and start the sleep timer."""
+        time.sleep(0.5)  # small grace period for JS to be fully ready
+        api._inject_pet_assets()
+        threading.Thread(
+            target=lambda: (time.sleep(1), api._start_sleep_timer()),
+            daemon=True,
+        ).start()
+
     pet_window.events.loaded += lambda: threading.Thread(
-        target=lambda: (time.sleep(1), api._start_sleep_timer()),
-        daemon=True,
+        target=on_pet_loaded, daemon=True
     ).start()
 
     if HAS_TRAY:
         tray_icon = None
 
         def on_closed():
-            """Minimize to tray instead of quitting."""
             if tray_icon and tray_icon.visible:
                 window.hide()
 
@@ -207,16 +264,14 @@ def main():
             tray_icon = create_tray_icon(window)
             tray_icon.run()
 
-        tray_thread = threading.Thread(target=start_tray, daemon=True)
-        tray_thread.start()
-
-        webview.start(debug=('--debug' in sys.argv))
-
+        threading.Thread(target=start_tray, daemon=True).start()
+        webview.start(debug=("--debug" in sys.argv))
         if tray_icon and tray_icon.visible:
             tray_icon.stop()
     else:
-        webview.start(debug=('--debug' in sys.argv))
+        webview.start(debug=("--debug" in sys.argv))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+
