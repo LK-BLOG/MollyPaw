@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MollyPaw Pet</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      background: transparent;
+      overflow: hidden;
+      user-select: none;
+      -webkit-app-region: no-drag;
+    }
+
+    #pet-container {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+    }
+
+    .pet-img {
+      width: 150px;
+      height: 150px;
+      image-rendering: pixelated;
+      transition: opacity 0.3s ease;
+      -webkit-app-region: no-drag;
+    }
+
+    /* ---- ZZZ 睡觉动画 ---- */
+    .pet-zzz {
+      position: absolute;
+      top: -10px;
+      left: 100px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #7BA4C8;
+      pointer-events: none;
+    }
+    .pet-zzz span {
+      display: inline-block;
+      font-family: 'Courier New', monospace;
+      opacity: 0.3;
+      transition: opacity 0.4s, transform 0.4s;
+    }
+    .pet-zzz span:nth-child(1) { font-size: 14px; }
+    .pet-zzz span:nth-child(2) { font-size: 18px; margin-left: 2px; }
+    .pet-zzz span:nth-child(3) { font-size: 22px; margin-left: 4px; }
+    .hidden { display: none !important; }
+
+    /* ---- 呼吸动画（睡觉时） ---- */
+    @keyframes breathe {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.05); }
+    }
+    .pet-breathe {
+      animation: breathe 3s ease-in-out infinite;
+    }
+
+    /* ---- 弹跳动画（空闲时） ---- */
+    @keyframes bounce {
+      0%, 100% { transform: translate(-50%, -50%); }
+      50% { transform: translate(-50%, -55%); }
+    }
+    .pet-bounce {
+      animation: bounce 1.5s ease-in-out infinite;
+    }
+
+    /* ---- 单次弹跳（切换状态时） ---- */
+    @keyframes bounceOnce {
+      0% { transform: translate(-50%, -50%) scale(1); }
+      30% { transform: translate(-50%, -50%) scale(1.1); }
+      60% { transform: translate(-50%, -50%) scale(0.95); }
+      100% { transform: translate(-50%, -50%) scale(1); }
+    }
+    .pet-bounce-once {
+      animation: bounceOnce 0.5s ease;
+    }
+
+    /* ---- 抖动动画（哭泣时） ---- */
+    @keyframes shake {
+      0%, 100% { transform: translate(-50%, -50%); }
+      10% { transform: translate(calc(-50% - 3px), -50%); }
+      20% { transform: translate(calc(-50% + 3px), -50%); }
+      30% { transform: translate(calc(-50% - 3px), -50%); }
+      40% { transform: translate(calc(-50% + 3px), -50%); }
+      50% { transform: translate(calc(-50% - 2px), -50%); }
+      60% { transform: translate(calc(-50% + 2px), -50%); }
+      70% { transform: translate(calc(-50% - 1px), -50%); }
+      80% { transform: translate(calc(-50% + 1px), -50%); }
+    }
+    .pet-shake {
+      animation: shake 0.6s ease-in-out infinite;
+    }
+
+    /* ---- 泪水 ---- */
+    .pet-tears {
+      position: absolute;
+      top: 50px;
+      left: 30px;
+      width: 90px;
+      height: 80px;
+      pointer-events: none;
+    }
+    .tear-drop {
+      position: absolute;
+      width: 6px;
+      height: 10px;
+      background: #5BADE5;
+      border-radius: 0 0 50% 50%;
+      opacity: 0;
+    }
+    .tear-drop.left { left: 20px; }
+    .tear-drop.right { right: 20px; }
+    @keyframes tearFall1 {
+      0% { top: 10px; opacity: 0.9; }
+      100% { top: 60px; opacity: 0; }
+    }
+    @keyframes tearFall2 {
+      0% { top: 5px; opacity: 0.9; }
+      100% { top: 65px; opacity: 0; }
+    }
+    .pet-shake .tear-drop.left {
+      animation: tearFall1 0.8s ease-in infinite;
+    }
+    .pet-shake .tear-drop.right {
+      animation: tearFall2 0.8s ease-in infinite 0.4s;
+    }
+
+    /* ---- 翻书气泡（工作时） ---- */
+    .pet-bubble {
+      position: absolute;
+      top: -40px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.95);
+      border: 2px solid #D2B48C;
+      border-radius: 10px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: #6B4226;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .pet-bubble::after {
+      content: '';
+      position: absolute;
+      bottom: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 6px solid #D2B48C;
+    }
+
+    /* ---- 拖拽中的样式 ---- */
+    .pet-dragging {
+      cursor: grabbing !important;
+      transition: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="pet-container">
+    <div id="pet-bubble" class="pet-bubble hidden">
+      <span id="pet-bubble-text"></span>
+    </div>
+    <div id="pet-zzz" class="pet-zzz hidden">
+      <span>Z</span><span>z</span><span>z</span>
+    </div>
+    <div id="pet-tears" class="pet-tears hidden">
+      <div class="tear-drop left"></div>
+      <div class="tear-drop right"></div>
+    </div>
+    <img id="pet-img" class="pet-img" src="../assets/pet/pet_idle.png" alt="MollyPaw" draggable="false">
+  </div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    var ASSETS = {
+      idle:  "../assets/pet/pet_idle.png",
+      work:  "../assets/pet/pet_work.png",
+      cry:   "../assets/pet/pet_cry.png",
+      sleep: "../assets/pet/pet_sleep.png",
+    };
+
+    var BUBBLE_TEXTS = {
+      work: "认真翻书中~",
+      cry:  "API连不上了...呜呜",
+      sleep: "zzZ...",
+      idle: "",
+    };
+
+    var container = document.getElementById("pet-container");
+    var imgEl     = document.getElementById("pet-img");
+    var zzzEl     = document.getElementById("pet-zzz");
+    var tearsEl   = document.getElementById("pet-tears");
+    var bubbleEl  = document.getElementById("pet-bubble");
+    var bubbleTxt = document.getElementById("pet-bubble-text");
+
+    var currentState = "idle";
+    var isDragging = false;
+    var dragOffsetX = 0;
+    var dragOffsetY = 0;
+    var zzzTimer = null;
+
+    // ---- 状态切换 ----
+    function setState(state) {
+      if (!ASSETS[state] || state === currentState) return;
+      currentState = state;
+
+      imgEl.src = ASSETS[state];
+
+      // 清除所有动画 class
+      container.className = "";
+      container.classList.add("pet-bounce-once");
+      setTimeout(function () {
+        if (currentState === "idle") container.className = "";
+        else if (currentState === "work") container.className = "pet-bounce";
+        else if (currentState === "sleep") container.className = "pet-breathe";
+        else if (currentState === "cry") container.className = "pet-shake";
+      }, 500);
+
+      // ZZZ
+      if (state === "sleep") {
+        zzzEl.classList.remove("hidden");
+        startZzz();
+      } else {
+        zzzEl.classList.add("hidden");
+        stopZzz();
+      }
+
+      // 泪水
+      if (state === "cry") {
+        tearsEl.classList.remove("hidden");
+      } else {
+        tearsEl.classList.add("hidden");
+      }
+
+      // 气泡
+      if (state === "cry" || state === "work") {
+        bubbleTxt.textContent = BUBBLE_TEXTS[state];
+        bubbleEl.classList.remove("hidden");
+      } else {
+        bubbleEl.classList.add("hidden");
+      }
+    }
+
+    // ---- ZZZ 动画 ----
+    function startZzz() {
+      stopZzz();
+      var idx = 0;
+      zzzTimer = setInterval(function () {
+        var spans = zzzEl.querySelectorAll("span");
+        for (var i = 0; i < spans.length; i++) {
+          var show = ((idx + i) % 3 === 0);
+          spans[i].style.opacity = show ? "1" : "0.3";
+          spans[i].style.transform = "translateY(-" + (((idx + i) % 3) * 5) + "px)";
+        }
+        idx++;
+      }, 500);
+    }
+
+    function stopZzz() {
+      if (zzzTimer) { clearInterval(zzzTimer); zzzTimer = null; }
+    }
+
+    // ---- 拖拽 ----
+    function onDown(cx, cy) {
+      isDragging = false;
+      var rect = container.getBoundingClientRect();
+      dragOffsetX = cx - rect.left - rect.width / 2;
+      dragOffsetY = cy - rect.top - rect.height / 2;
+      container.classList.add("pet-dragging");
+      container._sx = cx;
+      container._sy = cy;
+    }
+
+    function onMove(cx, cy) {
+      if (!container.classList.contains("pet-dragging")) return;
+      if (Math.abs(cx - container._sx) > 3 || Math.abs(cy - container._sy) > 3) {
+        isDragging = true;
+      }
+      container.style.left = cx + "px";
+      container.style.top = cy + "px";
+      container.style.transform = "none";
+    }
+
+    function onUp() {
+      container.classList.remove("pet-dragging");
+    }
+
+    container.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      onDown(e.clientX, e.clientY);
+    });
+    document.addEventListener("mousemove", function (e) {
+      onMove(e.clientX, e.clientY);
+    });
+    document.addEventListener("mouseup", onUp);
+
+    container.addEventListener("touchstart", function (e) {
+      e.preventDefault();
+      var t = e.touches[0];
+      onDown(t.clientX, t.clientY);
+    }, { passive: false });
+    document.addEventListener("touchmove", function (e) {
+      var t = e.touches[0];
+      onMove(t.clientX, t.clientY);
+    }, { passive: false });
+    document.addEventListener("touchend", onUp);
+
+    // ---- 后端通信 ----
+    function api() {
+      return window.pywebview ? window.pywebview.api : null;
+    }
+
+    // 轮询后端状态（每 1 秒检查一次）
+    setInterval(function () {
+      var a = api();
+      if (!a) return;
+      try {
+        var raw = a.get_pet_state();
+        if (raw) {
+          var result = JSON.parse(raw);
+          if (result.state) setState(result.state);
+        }
+      } catch (e) { /* ignore */ }
+    }, 1000);
+
+    // ---- 初始化 ----
+    setState("idle");
+  })();
+  </script>
+</body>
+</html>
+

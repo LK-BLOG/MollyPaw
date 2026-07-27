@@ -1,6 +1,4 @@
-"""MollyPaw - AI Agent Desktop Client
-Based on Molly (摩尼), a small teddy poodle.
-"""
+﻿"""MollyPaw - AI Agent Desktop Client + Desktop Pet"""
 import os
 import sys
 import json
@@ -23,17 +21,36 @@ class MollyPawAPI:
     def __init__(self):
         self.agent = AgentCore()
         self.window = None
+        self.pet_window = None
+        self.pet_state = "idle"  # idle | work | cry | sleep
 
     def set_window(self, window):
         self.window = window
 
+    def set_pet_window(self, pet_window):
+        self.pet_window = pet_window
+
     def send_message(self, message: str) -> str:
         """Send a user message to the agent and get a response."""
+        self.pet_state = "work"
         try:
             response = self.agent.chat(message)
+            self.pet_state = "idle"
             return json.dumps({"ok": True, "response": response}, ensure_ascii=False)
         except Exception as e:
+            self.pet_state = "cry"
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def get_pet_state(self) -> str:
+        """Return current pet state for the pet window to poll."""
+        return json.dumps({"state": self.pet_state}, ensure_ascii=False)
+
+    def set_pet_state(self, state: str) -> str:
+        """Manually set pet state."""
+        if state in ("idle", "work", "cry", "sleep"):
+            self.pet_state = state
+            return json.dumps({"ok": True}, ensure_ascii=False)
+        return json.dumps({"ok": False, "error": "Invalid state"}, ensure_ascii=False)
 
     def get_config(self) -> str:
         """Get current configuration (API key status, model, etc.)."""
@@ -62,6 +79,15 @@ def get_frontend_path():
     else:
         base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, 'frontend', 'index.html')
+
+
+def get_pet_frontend_path():
+    """Get the path to the pet frontend page."""
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, 'frontend', 'pet.html')
 
 
 def get_tray_icon_image():
@@ -110,6 +136,20 @@ def main():
     )
 
     api.set_window(window)
+
+    # Create floating desktop pet window (transparent, frameless, always on top)
+    pet_window = webview.create_window(
+        'MollyPaw Pet',
+        get_pet_frontend_path(),
+        width=200,
+        height=220,
+        frameless=True,
+        transparent=True,
+        on_top=True,
+        js_api=api,
+        resizable=False,
+    )
+    api.set_pet_window(pet_window)
 
     if HAS_TRAY:
         tray_icon = None
