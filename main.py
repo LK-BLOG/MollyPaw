@@ -112,57 +112,26 @@ class MollyPawAPI:
         return json.dumps({"ok": True}, ensure_ascii=False)
 
 
+def _base_dir():
+    """Return the project root (works for both dev and frozen builds)."""
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def get_frontend_path():
     """Get the path to the frontend directory."""
-    if getattr(sys, 'frozen', False):
-        base = sys._MEIPASS
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, 'frontend', 'index.html')
+    return os.path.join(_base_dir(), 'frontend', 'index.html')
 
 
 def get_pet_frontend_path():
     """Get the path to the pet frontend page."""
-    if getattr(sys, 'frozen', False):
-        base = sys._MEIPASS
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, 'frontend', 'pet.html')
-
-
-def get_pet_asset_dir():
-    """Get the path to the pet assets directory."""
-    if getattr(sys, 'frozen', False):
-        base = sys._MEIPASS
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, 'assets', 'pet')
-
-
-def inject_pet_assets(pet_window):
-    """Inject asset file:// URIs into the pet window after page load."""
-    asset_dir = get_pet_asset_dir()
-    # WebView2 on Windows needs forward slashes in file:/// URIs
-    prefix = 'file:///' + asset_dir.replace('\\', '/')
-    try:
-        pet_window.evaluate_js(
-            "window.setPetAssets("
-            "'" + prefix + "/pet_idle.png',"
-            "'" + prefix + "/pet_work.png',"
-            "'" + prefix + "/pet_cry.png',"
-            "'" + prefix + "/pet_sleep.png'"
-            ");"
-        )
-    except Exception:
-        pass
+    return os.path.join(_base_dir(), 'frontend', 'pet.html')
 
 
 def get_tray_icon_image():
     """Load the paw-print icon for the system tray."""
-    base = os.path.dirname(os.path.abspath(__file__))
-    if getattr(sys, 'frozen', False):
-        base = sys._MEIPASS
-    icon_path = os.path.join(base, 'assets', 'logo.png')
+    icon_path = os.path.join(_base_dir(), 'assets', 'logo.png')
     if os.path.exists(icon_path):
         return Image.open(icon_path).convert('RGBA').resize((64, 64), Image.LANCZOS)
     return Image.new('RGBA', (64, 64), (139, 94, 60, 255))
@@ -201,7 +170,6 @@ def main():
         js_api=api,
         text_select=True,
     )
-
     api.set_window(window)
 
     # Create floating desktop pet window (transparent, frameless, always on top)
@@ -218,17 +186,11 @@ def main():
     )
     api.set_pet_window(pet_window)
 
-    # Inject asset paths once the pet page finishes loading
-    def on_pet_loaded():
-        # Slight delay to ensure JS is fully ready
-        def _do_inject():
-            time.sleep(0.3)
-            inject_pet_assets(pet_window)
-            # Start idle->sleep timer
-            api._start_sleep_timer()
-        threading.Thread(target=_do_inject, daemon=True).start()
-
-    pet_window.events.loaded += on_pet_loaded
+    # Start idle->sleep timer after pet page loads
+    pet_window.events.loaded += lambda: threading.Thread(
+        target=lambda: (time.sleep(1), api._start_sleep_timer()),
+        daemon=True,
+    ).start()
 
     if HAS_TRAY:
         tray_icon = None
@@ -250,7 +212,6 @@ def main():
 
         webview.start(debug=('--debug' in sys.argv))
 
-        # Cleanup on exit
         if tray_icon and tray_icon.visible:
             tray_icon.stop()
     else:

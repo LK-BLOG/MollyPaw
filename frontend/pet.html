@@ -139,22 +139,9 @@
     }
 
     .pet-dragging { cursor: grabbing !important; transition: none !important; }
-
-    /* debug overlay */
-    #debug-info {
-      position: fixed;
-      top: 0; left: 0;
-      font-size: 10px;
-      color: red;
-      background: rgba(255,255,255,0.8);
-      padding: 2px 4px;
-      z-index: 999;
-      pointer-events: none;
-    }
   </style>
 </head>
 <body>
-  <div id="debug-info">loading...</div>
   <div id="pet-container">
     <div id="pet-bubble" class="pet-bubble hidden">
       <span id="pet-bubble-text"></span>
@@ -173,15 +160,16 @@
   (function () {
     "use strict";
 
-    var debugEl = document.getElementById("debug-info");
-    function log(msg) {
-      console.log("[Pet] " + msg);
-      debugEl.textContent = msg;
-    }
+    /* ---- resolve asset paths relative to this page ---- */
+    var ASSET_DIR = new URL('../assets/pet/', window.location.href);
 
-    log("location.href=" + window.location.href);
+    var ASSETS = {
+      idle:  new URL('pet_idle.png',  ASSET_DIR).href,
+      work:  new URL('pet_work.png',  ASSET_DIR).href,
+      cry:   new URL('pet_cry.png',   ASSET_DIR).href,
+      sleep: new URL('pet_sleep.png', ASSET_DIR).href
+    };
 
-    var ASSETS = {};
     var currentState = "idle";
     var isDragging = false;
     var dragOffsetX = 0;
@@ -199,29 +187,22 @@
       return window.pywebview ? window.pywebview.api : null;
     }
 
-    // --- Backend will call this to set asset paths ---
+    /* optional: backend can override paths via evaluate_js */
     window.setPetAssets = function(idle, work, cry, sleep) {
       ASSETS = { idle: idle, work: work, cry: cry, sleep: sleep };
-      log("assets set! idle=" + idle);
       setState("idle");
     };
 
-    // --- Backend will call this to switch state ---
     window.setPetState = function(state) {
       if (ASSETS[state]) setState(state);
     };
 
     function setState(state) {
-      if (!ASSETS[state]) {
-        log("no asset for state: " + state);
-        return;
-      }
+      if (!ASSETS[state]) return;
       currentState = state;
       imgEl.src = ASSETS[state];
-      log("state=" + state + " src=" + ASSETS[state]);
 
-      container.className = "";
-      container.classList.add("pet-bounce-once");
+      container.className = "pet-bounce-once";
       setTimeout(function () {
         container.className = "";
         if (state === "work") container.className = "pet-bounce";
@@ -239,8 +220,8 @@
 
       tearsEl.classList.toggle("hidden", state !== "cry");
 
-      if (state === "cry" || state === "work") {
-        var texts = { work: "认真翻书中~", cry: "API连不上了...呜呜", sleep: "zzZ...", idle: "" };
+      var texts = { work: "认真翻书中~", cry: "API连不上了...呜呜" };
+      if (texts[state]) {
         bubbleTxt.textContent = texts[state];
         bubbleEl.classList.remove("hidden");
       } else {
@@ -266,12 +247,9 @@
       if (zzzTimer) { clearInterval(zzzTimer); zzzTimer = null; }
     }
 
-    // --- Drag ---
+    /* ---- Drag ---- */
     function onDown(cx, cy) {
       isDragging = false;
-      var rect = container.getBoundingClientRect();
-      dragOffsetX = cx - rect.left - rect.width / 2;
-      dragOffsetY = cy - rect.top - rect.height / 2;
       container.classList.add("pet-dragging");
       container._sx = cx;
       container._sy = cy;
@@ -295,9 +273,7 @@
       e.preventDefault();
       onDown(e.clientX, e.clientY);
     });
-    document.addEventListener("mousemove", function (e) {
-      onMove(e.clientX, e.clientY);
-    });
+    document.addEventListener("mousemove", function (e) { onMove(e.clientX, e.clientY); });
     document.addEventListener("mouseup", onUp);
 
     container.addEventListener("touchstart", function (e) {
@@ -311,7 +287,7 @@
     }, { passive: false });
     document.addEventListener("touchend", onUp);
 
-    // --- Poll backend state ---
+    /* ---- Poll backend state every 1 s ---- */
     setInterval(function () {
       var a = api();
       if (!a) return;
@@ -326,7 +302,8 @@
       } catch (e) { /* ignore */ }
     }, 1000);
 
-    log("pet ready, waiting for assets from backend...");
+    /* start in idle */
+    setState("idle");
   })();
   </script>
 </body>
