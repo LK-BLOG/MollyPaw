@@ -33,6 +33,7 @@ pyinstaller ^
     --add-data "frontend;frontend" ^
     --add-data "assets;assets" ^
     --add-data "agent;agent" ^
+    --add-data "pet.py;." ^
     --hidden-import pystray ^
     --hidden-import PIL ^
     --hidden-import PIL._tkinter_finder ^
