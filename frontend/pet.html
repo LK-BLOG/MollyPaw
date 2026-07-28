@@ -9,10 +9,9 @@
     html, body {
       width: 100vw;
       height: 100vh;
-      background: white;
+      background: transparent;
       overflow: hidden;
       user-select: none;
-      -webkit-app-region: no-drag;
     }
 
     #pet-container {
@@ -28,7 +27,6 @@
       height: 150px;
       image-rendering: pixelated;
       transition: opacity 0.3s ease;
-      -webkit-app-region: no-drag;
     }
 
     .pet-zzz {
@@ -158,36 +156,28 @@
 
   <script>
   (function () {
-    "use strict";
+    var PET_SERVER = "http://127.0.0.1:18765";
+    var ASSETS = {
+      idle:  PET_SERVER + "/pet_idle.png",
+      work:  PET_SERVER + "/pet_work.png",
+      cry:   PET_SERVER + "/pet_cry.png",
+      sleep: PET_SERVER + "/pet_sleep.png"
+    };
 
-    var ASSETS = {};
+    var imgEl       = document.getElementById("pet-img");
+    var container   = document.getElementById("pet-container");
+    var zzzEl       = document.getElementById("pet-zzz");
+    var tearsEl     = document.getElementById("pet-tears");
+    var bubbleEl    = document.getElementById("pet-bubble");
+    var bubbleTxt   = document.getElementById("pet-bubble-text");
+
     var currentState = "idle";
-    var isDragging = false;
-    var zzzTimer = null;
-
-    var container = document.getElementById("pet-container");
-    var imgEl     = document.getElementById("pet-img");
-    var zzzEl     = document.getElementById("pet-zzz");
-    var tearsEl   = document.getElementById("pet-tears");
-    var bubbleEl  = document.getElementById("pet-bubble");
-    var bubbleTxt = document.getElementById("pet-bubble-text");
-
-    function api() {
-      return window.pywebview ? window.pywebview.api : null;
-    }
-
-    /* ---- Backend override (for evaluate_js injection from Python) ---- */
-    window.setPetAssets = function(idle, work, cry, sleep) {
-      ASSETS = { idle: idle, work: work, cry: cry, sleep: sleep };
-      setState("idle");
-    };
-
-    window.setPetState = function(state) {
-      if (ASSETS[state]) setState(state);
-    };
+    var isDragging   = false;
+    var zzzTimer     = null;
 
     function setState(state) {
       if (!ASSETS[state]) return;
+      if (state === currentState && imgEl.src.indexOf(ASSETS[state]) !== -1) return;
       currentState = state;
       imgEl.src = ASSETS[state];
 
@@ -209,7 +199,7 @@
 
       tearsEl.classList.toggle("hidden", state !== "cry");
 
-      var texts = { work: "\u8ba4\u771f\u7ffb\u4e66\u4e2d~", cry: "API\u8fde\u4e0d\u4e0a\u4e86...\u54fc\u54fc" };
+      var texts = { work: "认真翻书中~", cry: "API连不上了...呜呜" };
       if (texts[state]) {
         bubbleTxt.textContent = texts[state];
         bubbleEl.classList.remove("hidden");
@@ -276,53 +266,30 @@
     }, { passive: false });
     document.addEventListener("touchend", onUp);
 
-    /* ---- Load assets from HTTP server (pywebview 5.x returns Promises) ---- */
-    async function loadAssets() {
-      var a = api();
-      if (!a) { setTimeout(loadAssets, 500); return; }
+    /* ---- Poll state from HTTP server ---- */
+    async function pollState() {
       try {
-        var baseUrl = await a.get_pet_base_url();
-        if (baseUrl) {
-          ASSETS = {
-            idle:  baseUrl + "pet_idle.png",
-            work:  baseUrl + "pet_work.png",
-            cry:   baseUrl + "pet_cry.png",
-            sleep: baseUrl + "pet_sleep.png"
-          };
-          setState("idle");
-        } else {
-          setTimeout(loadAssets, 1000);
+        var resp = await fetch(PET_SERVER + "/state");
+        var data = await resp.json();
+        if (data.state && data.state !== currentState) {
+          setState(data.state);
         }
       } catch (e) {
-        setTimeout(loadAssets, 1000);
+        // Server not ready yet, retry next time
       }
     }
 
-    /* ---- Poll backend state every 1 s (async for pywebview 5.x) ---- */
-    async function pollState() {
-      var a = api();
-      if (!a) return;
-      try {
-        var raw = await a.get_pet_state();
-        if (raw) {
-          var result = JSON.parse(raw);
-          if (result.state && result.state !== currentState) {
-            setState(result.state);
-          }
-        }
-      } catch (e) { /* ignore */ }
-    }
-
+    // Poll every 1 second
     setInterval(pollState, 1000);
 
-    /* kick off asset loading once pywebview bridge is ready */
-    if (window.pywebview) {
-      loadAssets();
-    } else {
-      window.addEventListener("pywebviewready", loadAssets);
-    }
+    /* ---- Init: load idle image from HTTP server ---- */
+    setState("idle");
+
+    imgEl.addEventListener("error", function () {
+      // Retry once after a short delay
+      setTimeout(function () { setState(currentState); }, 1000);
+    });
   })();
   </script>
 </body>
 </html>
-

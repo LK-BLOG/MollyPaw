@@ -4,8 +4,8 @@ import sys
 import json
 import threading
 import time
-import urllib.parse
 import webview
+import http.server
 
 try:
     import pystray
@@ -26,7 +26,7 @@ class MollyPawAPI:
         self.pet_window = None
         self.pet_state = "idle"  # idle | work | cry | sleep
         self._last_activity = time.time()
-        self._idle_threshold = 30  # seconds before pet goes to sleep
+        self._idle_threshold = 30
         self._sleep_timer_started = False
 
     def set_window(self, window):
@@ -35,87 +35,82 @@ class MollyPawAPI:
     def set_pet_window(self, pet_window):
         self.pet_window = pet_window
 
+    def start_pet_server(self):
+        """Start a local HTTP server to serve pet assets + state API."""
+        pet_dir = os.path.join(_base_dir(), "assets", "pet")
+        api_ref = self
+
+        class PetHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/state":
+                    data = json.dumps({"state": api_ref.pet_state}).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    fname = self.path.lstrip("/")
+                    fpath = os.path.join(pet_dir, fname)
+                    if os.path.isfile(fpath):
+                        with open(fpath, "rb") as f:
+                            data = f.read()
+                        ext = os.path.splitext(fname)[1].lower()
+                        ctype = {
+                            ".png": "image/png",
+                            ".jpg": "image/jpeg",
+                            ".gif": "image/gif",
+                        }.get(ext, "application/octet-stream")
+                        self.send_response(200)
+                        self.send_header("Content-Type", ctype)
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                    else:
+                        self.send_error(404)
+
+            def log_message(self, fmt, *a):
+                pass
+
+        try:
+            httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 18765), PetHandler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            print("[MollyPaw] Pet server started on http://127.0.0.1:18765/")
+        except Exception as e:
+            print("[MollyPaw] Pet server failed: " + str(e))
+
     # -- Chat -----------------------------------------------------------------
 
-    def send_message(self, message: str) -> str:
+    def send_message(self, message):
         """Send a user message to the agent and get a response."""
         self.pet_state = "work"
         self._last_activity = time.time()
         self._sleep_timer_started = False
-        self._sync_pet_state()
         try:
             response = self.agent.chat(message)
             self.pet_state = "idle"
             self._last_activity = time.time()
-            self._sync_pet_state()
             self._start_sleep_timer()
             return json.dumps({"ok": True, "response": response}, ensure_ascii=False)
         except Exception as e:
             self.pet_state = "cry"
-            self._sync_pet_state()
             self._start_sleep_timer()
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
     # -- Pet state ------------------------------------------------------------
 
-    def get_pet_state(self) -> str:
+    def get_pet_state(self):
         """Return current pet state for the pet window to poll."""
         return json.dumps({"state": self.pet_state}, ensure_ascii=False)
 
-    def set_pet_state(self, state: str) -> str:
+    def set_pet_state(self, state):
         """Manually set pet state."""
         if state in ("idle", "work", "cry", "sleep"):
             self.pet_state = state
             self._last_activity = time.time()
-            self._sync_pet_state()
             return json.dumps({"ok": True}, ensure_ascii=False)
         return json.dumps({"ok": False, "error": "Invalid state"}, ensure_ascii=False)
-
-    def get_pet_base_url(self) -> str:
-        """Return the base HTTP URL where pet images are served (unused, kept for compat)."""
-        return ""
-
-    def _pet_asset_url(self, filename: str) -> str:
-        """Build a file:/// URL for a pet asset image."""
-        path = os.path.join(_base_dir(), "assets", "pet", filename)
-        return "file:///" + urllib.parse.quote(path.replace("\\", "/"), safe="/:")
-
-    def _inject_pet_assets(self):
-        """Push pet image URLs into the pet window via evaluate_js.
-
-        This is a fire-and-forget one-way push — no heavy data through
-        the JS bridge, just four short file:/// URLs.
-        """
-        if not self.pet_window:
-            return
-        urls = {
-            "idle":  self._pet_asset_url("pet_idle.png"),
-            "work":  self._pet_asset_url("pet_work.png"),
-            "cry":   self._pet_asset_url("pet_cry.png"),
-            "sleep": self._pet_asset_url("pet_sleep.png"),
-        }
-        js = (
-            "window.setPetAssets("
-            "'" + urls["idle"] + "',"
-            "'" + urls["work"] + "',"
-            "'" + urls["cry"] + "',"
-            "'" + urls["sleep"] + "'"
-            ")"
-        )
-        try:
-            self.pet_window.evaluate_js(js)
-        except Exception as e:
-            print(f"[MollyPaw] _inject_pet_assets failed: {e}")
-
-    def _sync_pet_state(self):
-        """Push current state to the pet window via evaluate_js."""
-        if self.pet_window:
-            try:
-                self.pet_window.evaluate_js(
-                    "window.setPetState('" + self.pet_state + "');"
-                )
-            except Exception:
-                pass
 
     def _start_sleep_timer(self):
         """Start a background timer that puts the pet to sleep after idle timeout."""
@@ -125,7 +120,6 @@ class MollyPawAPI:
                 elapsed = time.time() - self._last_activity
                 if elapsed >= self._idle_threshold and self.pet_state not in ("work", "sleep"):
                     self.pet_state = "sleep"
-                    self._sync_pet_state()
                     break
 
         if not self._sleep_timer_started:
@@ -135,12 +129,12 @@ class MollyPawAPI:
 
     # -- Config ---------------------------------------------------------------
 
-    def get_config(self) -> str:
+    def get_config(self):
         """Get current configuration (API key status, model, etc.)."""
         config = self.agent.get_config()
         return json.dumps(config, ensure_ascii=False)
 
-    def save_config(self, config_json: str) -> str:
+    def save_config(self, config_json):
         """Save configuration."""
         try:
             config = json.loads(config_json)
@@ -149,7 +143,7 @@ class MollyPawAPI:
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
-    def clear_history(self) -> str:
+    def clear_history(self):
         """Clear chat history."""
         self.agent.clear_history()
         return json.dumps({"ok": True}, ensure_ascii=False)
@@ -210,6 +204,7 @@ def create_tray_icon(window):
 
 def main():
     api = MollyPawAPI()
+    api.start_pet_server()
 
     # Main chat window
     window = webview.create_window(
@@ -231,23 +226,15 @@ def main():
         height=220,
         frameless=True,
         on_top=True,
-        js_api=api,
         resizable=False,
-        background_color="white",
+        background_color="#FFFFFF",
     )
     api.set_pet_window(pet_window)
 
-    def on_pet_loaded():
-        """After the pet HTML finishes loading, inject image URLs and start the sleep timer."""
-        time.sleep(0.5)  # small grace period for JS to be fully ready
-        api._inject_pet_assets()
-        threading.Thread(
-            target=lambda: (time.sleep(1), api._start_sleep_timer()),
-            daemon=True,
-        ).start()
-
-    pet_window.events.loaded += lambda: threading.Thread(
-        target=on_pet_loaded, daemon=True
+    # Start sleep timer after a short delay
+    threading.Thread(
+        target=lambda: (time.sleep(2), api._start_sleep_timer()),
+        daemon=True,
     ).start()
 
     if HAS_TRAY:
@@ -274,4 +261,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
