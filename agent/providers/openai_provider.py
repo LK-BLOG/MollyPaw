@@ -1,4 +1,4 @@
-﻿"""OpenAI-compatible LLM Provider."""
+"""OpenAI-compatible LLM Provider."""
 import json
 import requests
 from agent.providers.base import BaseProvider
@@ -40,7 +40,7 @@ class OpenAIProvider(BaseProvider):
             f"{self.base_url}/chat/completions",
             headers=self._headers(),
             json=payload,
-            timeout=120,
+            timeout=100000,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -73,7 +73,7 @@ class OpenAIProvider(BaseProvider):
             headers=self._headers(),
             json=payload,
             stream=True,
-            timeout=120,
+            timeout=100000,
         )
         resp.raise_for_status()
 

@@ -18,8 +18,8 @@ class PetWindow:
         self.root.title("MollyPaw Pet")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.attributes("-transparentcolor", "#FFFFFF")
-        self.root.configure(bg="#FFFFFF")
+        self.root.attributes("-transparentcolor", "#FF00FF")
+        self.root.configure(bg="#FF00FF")
 
         sx = self.root.winfo_screenwidth()
         sy = self.root.winfo_screenheight()
@@ -29,7 +29,7 @@ class PetWindow:
 
         self.canvas = tk.Canvas(
             self.root, width=WIN_W, height=WIN_H,
-            bg="#FFFFFF", highlightthickness=0,
+            bg="#FF00FF", highlightthickness=0,
         )
         self.canvas.pack()
 
@@ -66,6 +66,30 @@ class PetWindow:
                 data = urllib.request.urlopen(url, timeout=5).read()
                 img = Image.open(io.BytesIO(data)).convert("RGBA")
                 img = img.resize((IMG_SIZE, IMG_SIZE), Image.NEAREST)
+                # Replace background with sentinel color
+                sentinel = (255, 0, 255, 255)  # magenta
+                bg = img.getpixel((0, 0))[:3]
+                pixels = img.load()
+                w, h = img.size
+                # Phase 1: flood-fill from corners to find connected background
+                import collections
+                visited = set()
+                queue = collections.deque()
+                for start in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+                    queue.append(start)
+                while queue:
+                    px, py = queue.popleft()
+                    if (px, py) in visited:
+                        continue
+                    if px < 0 or px >= w or py < 0 or py >= h:
+                        continue
+                    r, g, b = pixels[px, py][:3]
+                    if abs(r - bg[0]) < 15 and abs(g - bg[1]) < 15 and abs(b - bg[2]) < 15:
+                        visited.add((px, py))
+                        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                            queue.append((px + dx, py + dy))
+                for px, py in visited:
+                    pixels[px, py] = sentinel
                 self.images[state] = ImageTk.PhotoImage(img)
             except Exception as e:
                 print(f"[Pet] Load failed {state}: {e}")
@@ -116,7 +140,7 @@ class PetWindow:
         w = max(len(text) * 10 + 24, 80)
         self.canvas.create_rectangle(
             x - w // 2, y - 14, x + w // 2, y + 14,
-            fill="white", outline="#D2B48C", width=2, tags="overlay",
+            fill="#FFFFFF", outline="#D2B48C", width=2, tags="overlay",
         )
         self.canvas.create_text(
             x, y, text=text, font=("Microsoft YaHei", 9),

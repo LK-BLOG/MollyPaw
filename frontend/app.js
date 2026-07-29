@@ -70,7 +70,7 @@
   }
 
   // ---- Send Message ----
-  async function sendMessage() {
+  function sendMessage() {
     const text = userInput.value.trim();
     if (!text || isLoading) return;
     if (!api()) {
@@ -85,22 +85,19 @@
     isLoading = true;
     showTyping();
 
-    try {
-      const raw = await api().send_message(text);
-      const result = JSON.parse(raw);
+    window._onChatResult = function (result) {
       hideTyping();
       if (result.ok) {
         appendMessage("assistant", result.response);
       } else {
         appendMessage("error", "Error: " + (result.error || "Unknown error"));
       }
-    } catch (e) {
-      hideTyping();
-      appendMessage("error", "Connection error: " + e.message);
-    }
+      isLoading = false;
+      userInput.focus();
+      window._onChatResult = null;
+    };
 
-    isLoading = false;
-    userInput.focus();
+    api().send_message(text);
   }
 
   // ---- Auto-resize Textarea ----
