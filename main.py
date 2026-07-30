@@ -528,7 +528,8 @@ class PetWindow:
 
         self.root.attributes("-topmost", True)
 
-        self.root.attributes("-transparentcolor", "#FF00FF")
+        if sys.platform == "win32":
+            self.root.attributes("-transparentcolor", "#FF00FF")
 
         self.root.configure(bg="#FF00FF")
 
@@ -889,38 +890,11 @@ class PetWindow:
 
 
 def start_pet():
-
     """Launch pet in a daemon thread."""
-
     try:
-
         PetWindow()
-
     except Exception as e:
-
         print("[MollyPaw] Pet failed: " + str(e))
-
-    if not os.path.exists(pet_script):
-
-        print("[MollyPaw] pet.py not found, skipping pet")
-
-        return
-
-    try:
-
-        _pet_process = subprocess.Popen(
-
-            [sys.executable, pet_script],
-
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-
-        )
-
-        print("[MollyPaw] Pet process started (pid={})".format(_pet_process.pid))
-
-    except Exception as e:
-
-        print("[MollyPaw] Failed to start pet: " + str(e))
 
 
 
