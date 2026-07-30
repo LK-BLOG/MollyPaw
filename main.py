@@ -106,16 +106,59 @@ class MollyPawAPI:
 
         class PetHandler(http.server.BaseHTTPRequestHandler):
 
+            def _send_json(self, data):
+                body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _read_body(self):
+                length = int(self.headers.get("Content-Length", 0))
+                return self.rfile.read(length) if length else b""
+
+            def do_OPTIONS(self):
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.end_headers()
+
+            def _serve_file(self, fpath, ctype):
+                with open(fpath, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
             def do_GET(self):
                 try:
                     if self.path == "/state":
-                        data = json.dumps({"state": api_ref.pet_state}).encode("utf-8")
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                        self.send_header("Content-Length", str(len(data)))
-                        self.end_headers()
-                        self.wfile.write(data)
+                        self._send_json({"state": api_ref.pet_state})
+                    elif self.path == "/api/config":
+                        def _work():
+                            try:
+                                if api_ref.agent is None:
+                                    from agent.core import AgentCore
+                                    api_ref.agent = AgentCore()
+                                config = api_ref.agent.get_config()
+                                api_ref._push_result("_onConfigResult", json.dumps({"ok": True, "config": config}, ensure_ascii=False))
+                            except Exception as e:
+                                api_ref._push_result("_onConfigResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                        threading.Thread(target=_work, daemon=True).start()
+                        self._send_json({"ok": True, "pending": True})
+                    elif self.path == "/" or self.path == "/index.html":
+                        frontend_dir = os.path.join(_base_dir(), "frontend")
+                        self._serve_file(os.path.join(frontend_dir, "index.html"), "text/html; charset=utf-8")
+                    elif self.path in ("/style.css", "/app.js"):
+                        frontend_dir = os.path.join(_base_dir(), "frontend")
+                        fpath = os.path.join(frontend_dir, self.path.lstrip("/"))
+                        ctype = "text/css" if self.path.endswith(".css") else "application/javascript"
+                        self._serve_file(fpath, ctype)
                     else:
                         fname = self.path.lstrip("/")
                         fpath = os.path.join(pet_dir, fname)
@@ -135,6 +178,60 @@ class MollyPawAPI:
                             self.wfile.write(data)
                         else:
                             self.send_error(404)
+                except (ConnectionAbortedError, BrokenPipeError):
+                    pass
+
+            def do_POST(self):
+                try:
+                    body = self._read_body()
+                    if self.path == "/api/chat":
+                        msg = json.loads(body).get("message", "")
+                        api_ref.pet_state = "work"
+                        api_ref._last_activity = time.time()
+                        api_ref._sleep_timer_started = False
+                        def _chat():
+                            try:
+                                if api_ref.agent is None:
+                                    from agent.core import AgentCore
+                                    api_ref.agent = AgentCore()
+                                response = api_ref.agent.chat(msg)
+                                api_ref.pet_state = "idle"
+                                api_ref._last_activity = time.time()
+                                api_ref._start_sleep_timer()
+                                api_ref._push_result("_onChatResult", json.dumps({"ok": True, "response": response}, ensure_ascii=False))
+                            except Exception as e:
+                                api_ref.pet_state = "cry"
+                                api_ref._start_sleep_timer()
+                                api_ref._push_result("_onChatResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                        threading.Thread(target=_chat, daemon=True).start()
+                        self._send_json({"ok": True, "pending": True})
+                    elif self.path == "/api/config":
+                        def _save():
+                            try:
+                                if api_ref.agent is None:
+                                    from agent.core import AgentCore
+                                    api_ref.agent = AgentCore()
+                                config = json.loads(body)
+                                api_ref.agent.save_config(config)
+                                api_ref._push_result("_onSaveConfigResult", json.dumps({"ok": True}, ensure_ascii=False))
+                            except Exception as e:
+                                api_ref._push_result("_onSaveConfigResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                        threading.Thread(target=_save, daemon=True).start()
+                        self._send_json({"ok": True, "pending": True})
+                    elif self.path == "/api/clear":
+                        def _clear():
+                            try:
+                                if api_ref.agent is None:
+                                    from agent.core import AgentCore
+                                    api_ref.agent = AgentCore()
+                                api_ref.agent.clear_history()
+                                api_ref._push_result("_onClearHistoryResult", json.dumps({"ok": True}, ensure_ascii=False))
+                            except Exception as e:
+                                api_ref._push_result("_onClearHistoryResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                        threading.Thread(target=_clear, daemon=True).start()
+                        self._send_json({"ok": True, "pending": True})
+                    else:
+                        self.send_error(404)
                 except (ConnectionAbortedError, BrokenPipeError):
                     pass
 
@@ -317,7 +414,7 @@ def _base_dir():
 
 def get_frontend_path():
 
-    return os.path.join(_base_dir(), "frontend", "index.html")
+    return "http://127.0.0.1:18765/"
 
 
 

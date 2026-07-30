@@ -1,34 +1,31 @@
-﻿/* MollyPaw - Frontend App Logic */
-
+/* MollyPaw - Frontend App Logic */
 (function () {
   "use strict";
 
-  // ---- DOM References ----
-  const messagesEl       = document.getElementById("messages");
-  const welcomeEl        = document.getElementById("welcome-screen");
-  const userInput        = document.getElementById("user-input");
-  const sendBtn          = document.getElementById("send-btn");
-  const newChatBtn       = document.getElementById("new-chat-btn");
-  const settingsBtn      = document.getElementById("settings-btn");
-  const settingsModal    = document.getElementById("settings-modal");
-  const settingsClose    = document.getElementById("settings-close");
-  const cfgApiKey        = document.getElementById("cfg-api-key");
-  const cfgBaseUrl       = document.getElementById("cfg-base-url");
-  const cfgModel         = document.getElementById("cfg-model");
-  const cfgTemperature   = document.getElementById("cfg-temperature");
-  const cfgSave          = document.getElementById("cfg-save");
-  const cfgCancel        = document.getElementById("cfg-cancel");
-  const cfgStatus        = document.getElementById("cfg-status");
+  var API_BASE = "http://127.0.0.1:18765";
 
-  let isLoading = false;
+  // ---- DOM References ----
+  var messagesEl     = document.getElementById("messages");
+  var welcomeEl      = document.getElementById("welcome-screen");
+  var userInput      = document.getElementById("user-input");
+  var sendBtn        = document.getElementById("send-btn");
+  var newChatBtn     = document.getElementById("new-chat-btn");
+  var settingsBtn    = document.getElementById("settings-btn");
+  var settingsModal  = document.getElementById("settings-modal");
+  var settingsClose  = document.getElementById("settings-close");
+  var cfgApiKey      = document.getElementById("cfg-api-key");
+  var cfgBaseUrl     = document.getElementById("cfg-base-url");
+  var cfgModel       = document.getElementById("cfg-model");
+  var cfgTemperature = document.getElementById("cfg-temperature");
+  var cfgSave        = document.getElementById("cfg-save");
+  var cfgCancel      = document.getElementById("cfg-cancel");
+  var cfgStatus      = document.getElementById("cfg-status");
+
+  var isLoading = false;
 
   // ---- Helpers ----
-  function api() {
-    return window.pywebview ? window.pywebview.api : null;
-  }
-
   function scrollToBottom() {
-    const c = document.getElementById("chat-container");
+    var c = document.getElementById("chat-container");
     c.scrollTop = c.scrollHeight;
   }
 
@@ -37,16 +34,28 @@
     messagesEl.classList.add("has-messages");
   }
 
+  function postAPI(path, body) {
+    return fetch(API_BASE + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json(); });
+  }
+
+  function getAPI(path) {
+    return fetch(API_BASE + path).then(function (r) { return r.json(); });
+  }
+
   // ---- Message Rendering ----
   function appendMessage(role, text) {
     hideWelcome();
-    const div = document.createElement("div");
+    var div = document.createElement("div");
     div.className = "message " + role;
-    const label = document.createElement("div");
+    var label = document.createElement("div");
     label.className = "msg-label";
     label.textContent = role === "user" ? "You" : "MollyPaw";
     div.appendChild(label);
-    const body = document.createElement("div");
+    var body = document.createElement("div");
     body.textContent = text;
     div.appendChild(body);
     messagesEl.appendChild(div);
@@ -56,7 +65,7 @@
 
   function showTyping() {
     hideWelcome();
-    const div = document.createElement("div");
+    var div = document.createElement("div");
     div.className = "typing-indicator";
     div.id = "typing";
     div.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span> MollyPaw is thinking...';
@@ -65,18 +74,14 @@
   }
 
   function hideTyping() {
-    const el = document.getElementById("typing");
+    var el = document.getElementById("typing");
     if (el) el.remove();
   }
 
   // ---- Send Message ----
   function sendMessage() {
-    const text = userInput.value.trim();
+    var text = userInput.value.trim();
     if (!text || isLoading) return;
-    if (!api()) {
-      appendMessage("error", "Backend not ready. Please wait a moment and try again.");
-      return;
-    }
 
     appendMessage("user", text);
     userInput.value = "";
@@ -97,7 +102,7 @@
       window._onChatResult = null;
     };
 
-    api().send_message(text);
+    postAPI("/api/chat", { message: text });
   }
 
   // ---- Auto-resize Textarea ----
@@ -111,7 +116,6 @@
     settingsModal.style.display = "flex";
     cfgStatus.textContent = "";
     cfgStatus.className = "cfg-status";
-    if (!api()) return;
 
     window._onConfigResult = function (result) {
       if (result.ok) {
@@ -127,11 +131,10 @@
       }
       window._onConfigResult = null;
     };
-    api().get_config();
+    getAPI("/api/config");
   }
 
   function saveSettings() {
-    if (!api()) return;
     var cfg = {};
     if (cfgApiKey.value) cfg.api_key = cfgApiKey.value;
     if (cfgBaseUrl.value) cfg.base_url = cfgBaseUrl.value;
@@ -149,7 +152,7 @@
       }
       window._onSaveConfigResult = null;
     };
-    api().save_config(JSON.stringify(cfg));
+    postAPI("/api/config", cfg);
   }
 
   // ---- Prompt Chips ----
@@ -178,10 +181,8 @@
   sendBtn.addEventListener("click", sendMessage);
 
   newChatBtn.addEventListener("click", function () {
-    if (api()) {
-      window._onClearHistoryResult = function () { window._onClearHistoryResult = null; };
-      api().clear_history();
-    }
+    window._onClearHistoryResult = function () { window._onClearHistoryResult = null; };
+    postAPI("/api/clear");
     messagesEl.innerHTML = "";
     messagesEl.classList.remove("has-messages");
     welcomeEl.style.display = "";
