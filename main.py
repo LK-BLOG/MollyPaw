@@ -1,12 +1,32 @@
 """MollyPaw - AI Agent Desktop Client + Desktop Pet"""
 import sys
-if sys.platform == "win32":
-    import ctypes
-    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "MollyPaw_SingleInstance")
-    if ctypes.windll.kernel32.GetLastError() == 183:
-        sys.exit(0)
-
 import os
+import tempfile
+
+# Single-instance lock via file
+_LOCK_PATH = os.path.join(tempfile.gettempdir(), "MollyPaw.lock")
+def _check_single_instance():
+    try:
+        # Try to open with exclusive access
+        fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        # Check if the PID in the file is still alive
+        try:
+            with open(_LOCK_PATH, "r") as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, 0)  # Check if process exists
+            return False  # Another instance is running
+        except (ValueError, OSError, ProcessLookupError):
+            # Lock is stale, remove it and take over
+            os.remove(_LOCK_PATH)
+            return _check_single_instance()
+
+if not _check_single_instance():
+    sys.exit(0)
+
 import io
 import json
 import random
@@ -886,6 +906,7 @@ def main():
 
 
 if __name__ == "__main__":
-
+    import atexit
+    atexit.register(lambda: os.remove(_LOCK_PATH) if os.path.exists(_LOCK_PATH) else None)
     main()
 
