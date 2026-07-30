@@ -7,21 +7,21 @@ import tempfile
 _LOCK_PATH = os.path.join(tempfile.gettempdir(), "MollyPaw.lock")
 def _check_single_instance():
     try:
-        # Try to open with exclusive access
         fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.write(fd, str(os.getpid()).encode())
         os.close(fd)
         return True
     except FileExistsError:
-        # Check if the PID in the file is still alive
         try:
             with open(_LOCK_PATH, "r") as f:
                 old_pid = int(f.read().strip())
-            os.kill(old_pid, 0)  # Check if process exists
-            return False  # Another instance is running
-        except (ValueError, OSError, ProcessLookupError):
-            # Lock is stale, remove it and take over
-            os.remove(_LOCK_PATH)
+            os.kill(old_pid, 0)
+            return False
+        except Exception:
+            try:
+                os.remove(_LOCK_PATH)
+            except Exception:
+                pass
             return _check_single_instance()
 
 if not _check_single_instance():
