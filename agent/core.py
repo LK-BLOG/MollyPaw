@@ -1,4 +1,4 @@
-﻿"""MollyPaw Agent Core - Main agent logic."""
+"""MollyPaw Agent Core - Main agent logic."""
 import json
 from agent.providers.openai_provider import OpenAIProvider
 from agent.tools import default_registry
@@ -32,10 +32,16 @@ class AgentCore:
         self.provider = self._create_provider()
         self.tool_registry = default_registry
 
+    def _config_dir(self):
+        import os, sys
+        if getattr(sys, 'frozen', False):
+            return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.abspath(__file__)) + os.sep + '..'
+
     def _load_config(self) -> dict:
         """Load config from file, falling back to defaults."""
         import os
-        config_path = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+        config_path = os.path.normpath(os.path.join(self._config_dir(), 'config.json'))
         config = dict(self.DEFAULT_CONFIG)
         if os.path.exists(config_path):
             try:
@@ -71,7 +77,7 @@ class AgentCore:
         for k, v in new_config.items():
             if k in self.DEFAULT_CONFIG:
                 self.config[k] = v
-        config_path = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+        config_path = os.path.normpath(os.path.join(self._config_dir(), 'config.json'))
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
         self.provider = self._create_provider()

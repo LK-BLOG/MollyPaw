@@ -379,9 +379,9 @@ class PetWindow:
 
     PET_SERVER = "http://127.0.0.1:18765"
 
-    WIN_W, WIN_H = 220, 250
+    WIN_W, WIN_H = 300, 340
 
-    IMG_SIZE = 150
+    IMG_SIZE = 220
 
 
 
@@ -870,10 +870,7 @@ def main():
 
 
         def on_closed():
-
-            if tray_icon and tray_icon.visible:
-
-                window.hide()
+            pass  # Don't destroy — let tray keep the process alive
 
 
 
@@ -895,9 +892,17 @@ def main():
 
         webview.start(debug=("--debug" in sys.argv))
 
-        if tray_icon and tray_icon.visible:
+        # webview.start() returns when window is closed.
+        # Keep process alive for tray until os._exit(0) from tray quit.
+        try:
 
-            tray_icon.stop()
+            while True:
+
+                time.sleep(1)
+
+        except KeyboardInterrupt:
+
+            pass
 
     else:
 
