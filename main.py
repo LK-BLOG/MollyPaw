@@ -249,29 +249,51 @@ class MollyPawAPI:
 
 
 
-    def _ensure_agent(self):
-        if not hasattr(self, 'agent') or self.agent is None:
-            from agent.core import AgentCore
-            self.agent = AgentCore()
+    def _push_result(self, callback, result):
+        if self.window:
+            self.window.evaluate_js(
+                f"window.{callback} && window.{callback}({result})"
+            )
 
     def get_config(self):
-        self._ensure_agent()
-        config = self.agent.get_config()
-        return json.dumps(config, ensure_ascii=False)
+        def _work():
+            try:
+                if self.agent is None:
+                    from agent.core import AgentCore
+                    self.agent = AgentCore()
+                config = self.agent.get_config()
+                self._push_result("_onConfigResult", json.dumps({"ok": True, "config": config}, ensure_ascii=False))
+            except Exception as e:
+                self._push_result("_onConfigResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        threading.Thread(target=_work, daemon=True).start()
+        return json.dumps({"ok": True, "pending": True}, ensure_ascii=False)
 
     def save_config(self, config_json):
-        self._ensure_agent()
-        try:
-            config = json.loads(config_json)
-            self.agent.save_config(config)
-            return json.dumps({"ok": True}, ensure_ascii=False)
-        except Exception as e:
-            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+        def _work():
+            try:
+                if self.agent is None:
+                    from agent.core import AgentCore
+                    self.agent = AgentCore()
+                config = json.loads(config_json)
+                self.agent.save_config(config)
+                self._push_result("_onSaveConfigResult", json.dumps({"ok": True}, ensure_ascii=False))
+            except Exception as e:
+                self._push_result("_onSaveConfigResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        threading.Thread(target=_work, daemon=True).start()
+        return json.dumps({"ok": True, "pending": True}, ensure_ascii=False)
 
     def clear_history(self):
-        self._ensure_agent()
-        self.agent.clear_history()
-        return json.dumps({"ok": True}, ensure_ascii=False)
+        def _work():
+            try:
+                if self.agent is None:
+                    from agent.core import AgentCore
+                    self.agent = AgentCore()
+                self.agent.clear_history()
+                self._push_result("_onClearHistoryResult", json.dumps({"ok": True}, ensure_ascii=False))
+            except Exception as e:
+                self._push_result("_onClearHistoryResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        threading.Thread(target=_work, daemon=True).start()
+        return json.dumps({"ok": True, "pending": True}, ensure_ascii=False)
 
 
 

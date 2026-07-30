@@ -107,48 +107,49 @@
   }
 
   // ---- Settings ----
-  async function openSettings() {
+  function openSettings() {
     settingsModal.style.display = "flex";
     cfgStatus.textContent = "";
     cfgStatus.className = "cfg-status";
     if (!api()) return;
-    try {
-      const raw = await api().get_config();
-      const cfg = JSON.parse(raw);
-      cfgApiKey.value = "";
-      cfgApiKey.placeholder = cfg.api_key_set ? cfg.api_key : "sk-...";
-      cfgBaseUrl.value = cfg.base_url || "";
-      cfgModel.value = cfg.model || "";
-      cfgTemperature.value = cfg.temperature != null ? cfg.temperature : 0.7;
-    } catch (e) {
-      cfgStatus.textContent = "Failed to load config";
-      cfgStatus.className = "cfg-status err";
-    }
+
+    window._onConfigResult = function (result) {
+      if (result.ok) {
+        var cfg = result.config;
+        cfgApiKey.value = "";
+        cfgApiKey.placeholder = cfg.api_key_set ? cfg.api_key : "sk-...";
+        cfgBaseUrl.value = cfg.base_url || "";
+        cfgModel.value = cfg.model || "";
+        cfgTemperature.value = cfg.temperature != null ? cfg.temperature : 0.7;
+      } else {
+        cfgStatus.textContent = "Failed to load config";
+        cfgStatus.className = "cfg-status err";
+      }
+      window._onConfigResult = null;
+    };
+    api().get_config();
   }
 
-  async function saveSettings() {
+  function saveSettings() {
     if (!api()) return;
-    const cfg = {};
+    var cfg = {};
     if (cfgApiKey.value) cfg.api_key = cfgApiKey.value;
     if (cfgBaseUrl.value) cfg.base_url = cfgBaseUrl.value;
     if (cfgModel.value) cfg.model = cfgModel.value;
     if (cfgTemperature.value !== "") cfg.temperature = parseFloat(cfgTemperature.value);
 
-    try {
-      const raw = await api().save_config(JSON.stringify(cfg));
-      const result = JSON.parse(raw);
+    window._onSaveConfigResult = function (result) {
       if (result.ok) {
         cfgStatus.textContent = "Saved!";
         cfgStatus.className = "cfg-status ok";
-        setTimeout(() => { settingsModal.style.display = "none"; }, 800);
+        setTimeout(function () { settingsModal.style.display = "none"; }, 800);
       } else {
         cfgStatus.textContent = "Error: " + (result.error || "Unknown");
         cfgStatus.className = "cfg-status err";
       }
-    } catch (e) {
-      cfgStatus.textContent = "Connection error";
-      cfgStatus.className = "cfg-status err";
-    }
+      window._onSaveConfigResult = null;
+    };
+    api().save_config(JSON.stringify(cfg));
   }
 
   // ---- Prompt Chips ----
@@ -176,9 +177,10 @@
 
   sendBtn.addEventListener("click", sendMessage);
 
-  newChatBtn.addEventListener("click", async function () {
+  newChatBtn.addEventListener("click", function () {
     if (api()) {
-      await api().clear_history();
+      window._onClearHistoryResult = function () { window._onClearHistoryResult = null; };
+      api().clear_history();
     }
     messagesEl.innerHTML = "";
     messagesEl.classList.remove("has-messages");
