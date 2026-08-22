@@ -18,6 +18,7 @@ MollyPaw.exe
 Thumbs.db
 desktop.ini
 *.log
+*.bak
 AGENTS.md
 
 data/
@@ -25,3 +26,4 @@ data/
 
 # Skills: ignore subdirectories (each skill) but keep the skills/ dir itself
 skills/*/
+scripts/
