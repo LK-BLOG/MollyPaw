@@ -1,4 +1,4 @@
-﻿"""MollyPaw - AI Agent Desktop Client + Desktop Pet"""
+"""MollyPaw - AI Agent Desktop Client + Desktop Pet"""
 import sys
 import os
 import tempfile
@@ -128,7 +128,8 @@ class MollyPawAPI:
                 self.agent.config["approval_mode"] = mode
                 # Persist to config
                 import os
-                config_path = os.path.normpath(os.path.join(self.agent._config_dir(), 'config.json'))
+                from agent.paths import config_path as _apicfg_path
+                config_path = _apicfg_path()
                 with open(config_path, 'r', encoding='utf-8') as f:
                     cfg = json.load(f)
                 cfg["approval_mode"] = mode

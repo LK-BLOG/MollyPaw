@@ -103,9 +103,8 @@ class MemoryTool:
     ]
 
     def __init__(self):
-        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self._mem_dir = os.path.join(base, "data", "memory")
-        os.makedirs(self._mem_dir, exist_ok=True)
+        from agent.paths import memory_dir
+        self._mem_dir = memory_dir()
 
     def execute(self, func_name, arguments):
         method = getattr(self, func_name, None)

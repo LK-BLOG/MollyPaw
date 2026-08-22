@@ -1,4 +1,4 @@
-﻿"""MollyPaw Agent Core - Main agent logic."""
+"""MollyPaw Agent Core - Main agent logic."""
 import json
 import os
 import re
@@ -6,6 +6,7 @@ import time as _time
 import uuid
 from agent.providers.openai_provider import OpenAIProvider
 from agent.tools import default_registry
+from agent.paths import config_path as _cfg_path, conversations_dir as _conv_dir
 
 
 SYSTEM_PROMPT = (
@@ -54,22 +55,17 @@ class AgentCore:
         self.approval_mode = self.config.get("approval_mode", "prompt_dangerous")
         # Conversation persistence
         self.conversation_id = None
-        self._conversations_dir = os.path.join(self._config_dir(), 'data', 'conversations')
-        os.makedirs(self._conversations_dir, exist_ok=True)
+        self._conversations_dir = _conv_dir()
 
-    def _config_dir(self):
-        import sys
-        if getattr(sys, 'frozen', False):
-            return os.path.dirname(sys.executable)
-        return os.path.dirname(os.path.abspath(__file__)) + os.sep + '..'
+
 
     def _load_config(self) -> dict:
         """Load config from file, falling back to defaults."""
-        config_path = os.path.normpath(os.path.join(self._config_dir(), 'config.json'))
+        cfg_path = _cfg_path()
         config = dict(self.DEFAULT_CONFIG)
-        if os.path.exists(config_path):
+        if os.path.exists(cfg_path):
             try:
-                with open(config_path, 'r', encoding='utf-8') as f:
+                with open(cfg_path, 'r', encoding='utf-8') as f:
                     saved = json.load(f)
                 config.update(saved)
             except Exception:
@@ -100,8 +96,8 @@ class AgentCore:
         for k, v in new_config.items():
             if k in self.DEFAULT_CONFIG:
                 self.config[k] = v
-        config_path = os.path.normpath(os.path.join(self._config_dir(), 'config.json'))
-        with open(config_path, 'w', encoding='utf-8') as f:
+        cfg_path = _cfg_path()
+        with open(cfg_path, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
         self.provider = self._create_provider()
         self.approval_mode = self.config.get("approval_mode", "prompt_dangerous")
@@ -383,3 +379,5 @@ class AgentCore:
         """Clear chat history, keeping the system prompt."""
         self.history = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.conversation_id = None
+
+

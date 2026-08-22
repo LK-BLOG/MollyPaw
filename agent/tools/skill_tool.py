@@ -1,4 +1,4 @@
-﻿"""Skill Tool - MD-based skill system. Skills live in subdirectories with SKILL.md."""
+"""Skill Tool - MD-based skill system. Skills live in subdirectories with SKILL.md."""
 import os
 import re
 import shutil
@@ -90,11 +90,8 @@ class SkillTool:
     ]
 
     def __init__(self):
-        self._skills_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "skills"
-        )
-        os.makedirs(self._skills_dir, exist_ok=True)
+        from agent.paths import skills_dir
+        self._skills_dir = skills_dir()
 
     def execute(self, func_name: str, arguments: dict) -> str:
         method = getattr(self, func_name, None)
