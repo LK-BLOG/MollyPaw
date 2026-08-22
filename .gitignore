@@ -19,3 +19,9 @@ Thumbs.db
 desktop.ini
 *.log
 AGENTS.md
+
+data/
+.mimocode/
+
+# Skills: ignore subdirectories (each skill) but keep the skills/ dir itself
+skills/*/

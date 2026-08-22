@@ -1,4 +1,4 @@
-﻿/* MollyPaw - Warm Brown & White Theme */
+/* MollyPaw - Warm Brown & White Theme */
 
 :root {
   --deep-brown: #6B4226;
@@ -90,14 +90,39 @@ body {
   font-size: 13px;
 }
 .history-item {
+  display: flex;
+  align-items: center;
   padding: 10px 12px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
+  transition: background 0.15s;
+}
+.history-item-title {
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background 0.15s;
+  min-width: 0;
+}
+.history-item-delete {
+  display: none;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.history-item:hover .history-item-delete {
+  display: block;
+}
+.history-item-delete:hover {
+  color: #FF6B6B;
+  background: rgba(255,255,255,0.1);
 }
 .history-item:hover { background: rgba(255,255,255,0.1); }
 .history-item.active { background: rgba(255,255,255,0.15); color: var(--pure-white); }
@@ -415,3 +440,396 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--tan); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--light-brown); }
+
+/* ---- Tool Call Indicators ---- */
+.tool-call-indicator {
+  margin: 4px 48px;
+  padding: 10px 14px;
+  background: #FFF5EC;
+  border: 1px solid var(--tan);
+  border-left: 3px solid var(--paw-orange);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tool-call-indicator:hover {
+  background: #FFEFD8;
+}
+
+.tc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tc-icon {
+  font-size: 14px;
+}
+
+.tc-name {
+  font-weight: 600;
+  color: var(--deep-brown);
+  font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+}
+
+.tc-danger {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.tc-danger-safe {
+  background: #E8F5E9;
+  color: #2E7D32;
+}
+.tc-danger-moderate {
+  background: #FFF3E0;
+  color: #E65100;
+}
+.tc-danger-dangerous {
+  background: #FFEBEE;
+  color: #C62828;
+}
+
+.tc-args {
+  margin: 4px 0;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--deep-brown);
+  max-height: 100px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  display: none;
+}
+.tool-call-indicator.expanded .tc-args {
+  display: block;
+}
+
+.tc-status {
+  font-size: 12px;
+  color: var(--light-brown);
+  margin-top: 4px;
+}
+.tc-running {
+  color: var(--paw-orange);
+}
+.tc-done {
+  color: #4A8;
+}
+.tc-error {
+  color: #A33;
+}
+.tc-rejected {
+  color: #A33;
+}
+
+/* ---- Approval Modal ---- */
+.approval-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(58, 42, 26, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  backdrop-filter: blur(4px);
+}
+
+.approval-modal {
+  background: var(--pure-white);
+  border-radius: 12px;
+  width: 460px;
+  max-width: 90vw;
+  box-shadow: 0 16px 48px rgba(58, 42, 26, 0.25);
+  border: 2px solid var(--paw-orange);
+}
+
+.approval-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--warm-gray);
+}
+
+.approval-header h3 {
+  font-size: 16px;
+  color: var(--deep-brown);
+  margin: 0;
+}
+
+.approval-icon {
+  font-size: 22px;
+}
+
+.approval-body {
+  padding: 16px 20px;
+}
+
+.approval-detail {
+  margin-bottom: 12px;
+}
+
+.approval-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--light-brown);
+  margin-bottom: 4px;
+}
+
+.approval-detail pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--cream);
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--deep-brown);
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.danger-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.danger-safe {
+  background: #E8F5E9;
+  color: #2E7D32;
+}
+.danger-moderate {
+  background: #FFF3E0;
+  color: #E65100;
+}
+.danger-dangerous {
+  background: #FFEBEE;
+  color: #C62828;
+}
+
+.approval-actions {
+  padding: 14px 20px;
+  border-top: 1px solid var(--warm-gray);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-approve {
+  padding: 8px 24px;
+  background: var(--paw-orange);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-approve:hover {
+  opacity: 0.9;
+}
+
+.btn-reject {
+  padding: 8px 24px;
+  background: var(--warm-gray);
+  color: var(--deep-brown);
+  border: none;
+  border-radius: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.btn-reject:hover {
+  background: var(--tan);
+}
+
+.approval-always {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--light-brown);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- Settings select ---- */
+.form-group select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid var(--tan);
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: var(--deep-brown);
+  background: var(--cream);
+  outline: none;
+  transition: border-color 0.15s;
+  appearance: auto;
+}
+.form-group select:focus {
+  border-color: var(--paw-orange);
+}
+
+/* ---- Language Toggle ---- */
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.lang-btn {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.3px;
+  color: var(--cream);
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  transition: background 0.15s, border-color 0.15s;
+}
+.lang-btn:hover {
+  background: rgba(255,255,255,0.18);
+  border-color: rgba(255,255,255,0.35);
+}
+
+/* ---- Markdown Rendering ---- */
+.msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4, .msg-body h5, .msg-body h6 {
+  color: var(--deep-brown);
+  font-weight: 700;
+  margin: 16px 0 8px;
+  line-height: 1.3;
+}
+.msg-body h1 { font-size: 20px; }
+.msg-body h2 { font-size: 18px; border-bottom: 1px solid var(--tan); padding-bottom: 4px; }
+.msg-body h3 { font-size: 16px; }
+.msg-body h4, .msg-body h5, .msg-body h6 { font-size: 14px; }
+
+.msg-body p {
+  margin: 6px 0;
+  line-height: 1.7;
+}
+
+.msg-body ul, .msg-body ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+.msg-body li {
+  margin: 3px 0;
+  line-height: 1.6;
+}
+.msg-body li > ul, .msg-body li > ol {
+  margin: 2px 0;
+}
+
+.msg-body blockquote {
+  margin: 10px 0;
+  padding: 8px 16px;
+  border-left: 3px solid var(--paw-orange);
+  background: rgba(212, 130, 58, 0.06);
+  border-radius: 0 6px 6px 0;
+  color: var(--light-brown);
+}
+.msg-body blockquote p {
+  margin: 4px 0;
+}
+
+.msg-body pre {
+  margin: 10px 0;
+  padding: 12px 16px;
+  background: var(--dark-brown);
+  color: #F5EDE3;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.msg-body pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.msg-body code {
+  background: rgba(107, 66, 38, 0.08);
+  color: var(--deep-brown);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 12.5px;
+}
+
+.msg-body table {
+  margin: 10px 0;
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.msg-body th {
+  background: var(--mid-brown);
+  color: var(--pure-white);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+}
+.msg-body td {
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(210, 180, 140, 0.3);
+}
+.msg-body tr:nth-child(even) td {
+  background: rgba(210, 180, 140, 0.08);
+}
+.msg-body tr:hover td {
+  background: rgba(212, 130, 58, 0.08);
+}
+
+.msg-body hr {
+  border: none;
+  border-top: 1px solid var(--tan);
+  margin: 14px 0;
+}
+
+.msg-body a {
+  color: var(--paw-orange);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s;
+}
+.msg-body a:hover {
+  border-bottom-color: var(--paw-orange);
+}
+
+.msg-body img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 6px 0;
+}
+
+.msg-body strong {
+  font-weight: 700;
+  color: var(--deep-brown);
+}
+
+.msg-body em {
+  font-style: italic;
+  color: var(--light-brown);
+}
+
+.msg-body del {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
