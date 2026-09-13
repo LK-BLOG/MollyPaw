@@ -1,4 +1,4 @@
-/* MollyPaw - Frontend App Logic */
+﻿/* MollyPaw - Frontend App Logic */
 (function () {
   "use strict";
 
@@ -38,6 +38,14 @@
       danger_moderate: "Moderate",
       danger_dangerous: "\u26A0\uFE0F Dangerous",
       settings_title: "Settings",
+      provider_label: "Provider",
+      protocol_label: "API Protocol",
+      protocol_chat: "OpenAI Chat Completions",
+      protocol_responses: "OpenAI Responses",
+      fetch_models: "Fetch models",
+      model_fetching: "Fetching models...",
+      model_fetch_failed: "Model fetch failed",
+      manual_model_placeholder: "Enter model ID manually",
       api_key_label: "API Key",
       base_url_label: "Base URL",
       model_label: "Model",
@@ -87,6 +95,14 @@
       danger_moderate: "\u4E2D\u7B49",
       danger_dangerous: "\u26A0\uFE0F \u5371\u9669",
       settings_title: "\u8BBE\u7F6E",
+      provider_label: "\u4F9B\u5E94\u5546",
+      protocol_label: "API \u534F\u8BAE",
+      protocol_chat: "OpenAI Chat Completions",
+      protocol_responses: "OpenAI Responses",
+      fetch_models: "\u62C9\u53D6\u6A21\u578B",
+      model_fetching: "\u6B63\u5728\u62C9\u53D6\u6A21\u578B...",
+      model_fetch_failed: "\u6A21\u578B\u62C9\u53D6\u5931\u8D25",
+      manual_model_placeholder: "\u624B\u52A8\u8F93\u5165\u6A21\u578B ID",
       api_key_label: "API Key",
       base_url_label: "Base URL",
       model_label: "\u6A21\u578B",
@@ -203,6 +219,16 @@
 
   function getAPI(path) {
     return fetch(API_BASE + path).then(function (r) { return r.json(); });
+  }
+
+  function pollEvents() {
+    getAPI("/api/events").then(function (result) {
+      (result.events || []).forEach(function (event) {
+        if (typeof window[event.name] === "function") window[event.name](event.payload);
+      });
+    }).catch(function () {}).finally(function () {
+      setTimeout(pollEvents, 250);
+    });
   }
 
   // ---- Sidebar: Conversation List ----
@@ -509,62 +535,132 @@
   }
 
   // ---- Settings ----
+  var providers = [];
+  var selectedProvider = null;
+
+  function formatModelName(modelId) {
+    return String(modelId).replace(/-/g, " ").replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
+  }
+
+  function renderModels(models) {
+    var select = $("cfg-model");
+    if (!select) return;
+    select.innerHTML = "";
+    (models || []).forEach(function (id) {
+      var option = document.createElement("option");
+      option.value = id;
+      option.textContent = formatModelName(id);
+      select.appendChild(option);
+    });
+    select.disabled = !(models && models.length);
+  }
+
+  function updateProviderFields() {
+    var id = $("cfg-provider").value;
+    selectedProvider = providers.filter(function (p) { return p.id === id; })[0];
+    var custom = id === "custom";
+    $("cfg-custom-url-group").style.display = custom ? "" : "none";
+    $("cfg-protocol-group").style.display = custom ? "" : "none";
+    var tempGroup = $("cfg-temperature").closest(".form-group");
+    if (tempGroup) tempGroup.style.display = selectedProvider && !selectedProvider.supports_temperature ? "none" : "";
+    if (custom) $("cfg-protocol").value = "chat";
+    renderModels([]);
+    $("cfg-manual-model").style.display = "none";
+  }
+
+  function loadProviders(done) {
+    getAPI("/api/providers").then(function (result) {
+      providers = result.providers || [];
+      var select = $("cfg-provider");
+      if (select) {
+        select.innerHTML = "";
+        providers.forEach(function (provider) {
+          var option = document.createElement("option");
+          option.value = provider.id;
+          option.textContent = provider.display_name;
+          select.appendChild(option);
+        });
+      }
+      if (done) done();
+    });
+  }
+
   function openSettings() {
     var sm = $("settings-modal");
     if (!sm) return;
     sm.style.display = "flex";
     var cs = $("cfg-status");
     if (cs) { cs.textContent = ""; cs.className = "cfg-status"; }
-
     window._onConfigResult = function (result) {
-      if (result.ok) {
-        var cfg = result.config;
-        var ak = $("cfg-api-key");
-        if (ak) { ak.value = ""; ak.placeholder = cfg.api_key_set ? cfg.api_key : "sk-..."; }
-        var bu = $("cfg-base-url");
-        if (bu) bu.value = cfg.base_url || "";
-        var mo = $("cfg-model");
-        if (mo) mo.value = cfg.model || "";
-        var te = $("cfg-temperature");
-        if (te) te.value = cfg.temperature != null ? cfg.temperature : 0.7;
-        var am = $("cfg-approval-mode");
-        if (am && cfg.approval_mode) am.value = cfg.approval_mode;
-      } else {
-        if (cs) { cs.textContent = t("config_failed"); cs.className = "cfg-status err"; }
-      }
+      if (!result.ok) { if (cs) { cs.textContent = t("config_failed"); cs.className = "cfg-status err"; } return; }
+      var cfg = result.config || {};
+      var ak = $("cfg-api-key");
+      if (ak) { ak.value = ""; ak.placeholder = cfg.api_key_set ? cfg.api_key : "sk-..."; }
+      loadProviders(function () {
+        var ps = $("cfg-provider");
+        if (ps) ps.value = cfg.provider_id || "custom";
+        updateProviderFields();
+        if (selectedProvider && selectedProvider.id !== "custom") {
+          // Preserve the saved model as a selectable value until the next fetch.
+          renderModels(cfg.model ? [cfg.model] : []);
+        }
+        if ($("cfg-base-url")) $("cfg-base-url").value = cfg.base_url || "";
+        if ($("cfg-protocol")) $("cfg-protocol").value = cfg.protocol || "chat";
+        if ($("cfg-temperature")) $("cfg-temperature").value = cfg.temperature != null ? cfg.temperature : 0.7;
+        if ($("cfg-approval-mode") && cfg.approval_mode) $("cfg-approval-mode").value = cfg.approval_mode;
+      });
       window._onConfigResult = null;
     };
     getAPI("/api/config");
   }
 
+  function fetchModels() {
+    var providerId = $("cfg-provider").value;
+    var key = $("cfg-api-key").value;
+    if (!key && !$("cfg-api-key").placeholder) { key = ""; }
+    var button = $("cfg-fetch-models");
+    var status = $("cfg-status");
+    if (button) { button.disabled = true; button.textContent = t("model_fetching"); }
+    postAPI("/api/models", { provider_id: providerId, api_key: key, base_url: $("cfg-base-url").value, protocol: $("cfg-protocol").value })
+      .then(function () { /* result arrives through HTTP event polling */ });
+    window._onModelsResult = function (result) {
+      if (button) { button.disabled = false; button.textContent = t("fetch_models"); }
+      if (result.ok) {
+        renderModels(result.models);
+        $("cfg-manual-model").style.display = "none";
+        if (status) { status.textContent = (result.models || []).length + " models"; status.className = "cfg-status ok"; }
+      } else {
+        renderModels([]);
+        $("cfg-manual-model").style.display = "";
+        $("cfg-manual-model").placeholder = t("manual_model_placeholder");
+        if (status) { status.textContent = t("model_fetch_failed") + ": " + (result.error || ""); status.className = "cfg-status err"; }
+      }
+      window._onModelsResult = null;
+    };
+  }
+
   function saveSettings() {
-    var cfg = {};
+    var modelSelect = $("cfg-model");
+    var manual = $("cfg-manual-model");
+    var cfg = { provider_id: $("cfg-provider").value, model: (manual && manual.style.display !== "none" ? manual.value : modelSelect.value), protocol: $("cfg-protocol").value };
     var ak = $("cfg-api-key");
     if (ak && ak.value) cfg.api_key = ak.value;
-    var bu = $("cfg-base-url");
-    if (bu && bu.value) cfg.base_url = bu.value;
-    var mo = $("cfg-model");
-    if (mo && mo.value) cfg.model = mo.value;
+    if (cfg.provider_id === "custom") cfg.base_url = $("cfg-base-url").value;
     var te = $("cfg-temperature");
     if (te && te.value !== "") cfg.temperature = parseFloat(te.value);
     var am = $("cfg-approval-mode");
     if (am && am.value) cfg.approval_mode = am.value;
-
-    window._onSaveConfigResult = function (result) {
-      var cs = $("cfg-status");
-      if (result.ok) {
-        if (cs) { cs.textContent = t("saved"); cs.className = "cfg-status ok"; }
-        setTimeout(function () {
-          var sm = $("settings-modal");
-          if (sm) sm.style.display = "none";
-        }, 800);
-      } else {
-        if (cs) { cs.textContent = t("error_prefix") + (result.error || ""); cs.className = "cfg-status err"; }
-      }
-      window._onSaveConfigResult = null;
-    };
+    if (!cfg.model) { $("cfg-status").textContent = t("model_fetch_failed"); return; }
     postAPI("/api/config", cfg);
   }
+
+  window._onSaveConfigResult = function (result) {
+    var cs = $("cfg-status");
+    if (cs) { cs.textContent = result.ok ? t("saved") : t("error_prefix") + (result.error || ""); cs.className = result.ok ? "cfg-status ok" : "cfg-status err"; }
+    if (result.ok) setTimeout(function () { $("settings-modal").style.display = "none"; }, 800);
+  };
+
+  pollEvents();
 
   // ---- Language Toggle ----
   var langBtn = $("lang-toggle");
@@ -630,6 +726,10 @@
 
   var cfgSave = $("cfg-save");
   if (cfgSave) cfgSave.addEventListener("click", saveSettings);
+  var cfgFetch = $("cfg-fetch-models");
+  if (cfgFetch) cfgFetch.addEventListener("click", fetchModels);
+  var cfgProvider = $("cfg-provider");
+  if (cfgProvider) cfgProvider.addEventListener("change", updateProviderFields);
 
   var cfgCancel = $("cfg-cancel");
   if (cfgCancel) {
@@ -658,10 +758,7 @@
     if (!href) return;
     if (href.startsWith('http://') || href.startsWith('https://')) {
       e.preventDefault();
-      e.stopPropagation();
-      if (window.pywebview && window.pywebview.api && window.pywebview.api.open_url) {
-        window.pywebview.api.open_url(JSON.stringify({url: href}));
-      }
+      window.open(href, "_blank", "noopener");
     }
   }, true);
 

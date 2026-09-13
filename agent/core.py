@@ -1,10 +1,11 @@
-"""MollyPaw Agent Core - Main agent logic."""
+﻿"""MollyPaw Agent Core - Main agent logic."""
 import json
 import os
 import re
 import time as _time
 import uuid
 from agent.providers.openai_provider import OpenAIProvider
+from agent.providers.catalog import get_provider, find_by_base_url
 from agent.tools import default_registry
 from agent.paths import config_path as _cfg_path, conversations_dir as _conv_dir
 
@@ -35,9 +36,11 @@ class AgentCore:
     """Core agent that manages chat, history, tools, and provider interaction."""
 
     DEFAULT_CONFIG = {
+        "provider_id": "openai",
         "api_key": "",
-        "model": "gpt-3.5-turbo",
+        "model": "",
         "base_url": "https://api.openai.com/v1",
+        "protocol": "responses",
         "temperature": 0.7,
         "max_tokens": 2048,
         "approval_mode": "prompt_dangerous",
@@ -68,16 +71,36 @@ class AgentCore:
                 with open(cfg_path, 'r', encoding='utf-8') as f:
                     saved = json.load(f)
                 config.update(saved)
+                if "provider_id" not in saved:
+                    preset = find_by_base_url(saved.get("base_url", ""))
+                    config["provider_id"] = preset["id"] if preset else "custom"
+                    config["protocol"] = saved.get("protocol", "chat")
+                elif config["provider_id"] != "custom":
+                    preset = get_provider(config["provider_id"])
+                    if preset:
+                        config["base_url"] = preset["base_url"]
+                        config["protocol"] = preset["protocol"]
             except Exception:
                 pass
         return config
 
     def _create_provider(self):
         """Create the LLM provider based on config."""
-        api_key = self.config.get("api_key", "")
-        base_url = self.config.get("base_url", "")
-        model = self.config.get("model", "gpt-3.5-turbo")
-        return OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
+        provider_id = self.config.get("provider_id", "custom")
+        preset = get_provider(provider_id)
+        base_url = preset["base_url"] if preset else self.config.get("base_url", "")
+        protocol = preset["protocol"] if preset else self.config.get("protocol", "chat")
+        return OpenAIProvider(
+            api_key=self.config.get("api_key", ""),
+            base_url=base_url,
+            model=self.config.get("model", ""),
+            temperature=self.config.get("temperature", 0.7),
+            max_tokens=self.config.get("max_tokens", 2048),
+            protocol=protocol,
+            models_path=(preset or {}).get("models_path", "/models"),
+            auth_mode=(preset or {}).get("auth_mode", "bearer"),
+            supports_temperature=(preset or {}).get("supports_temperature", True),
+        )
 
     def get_config(self) -> dict:
         """Return config with api_key masked for display."""
@@ -96,6 +119,12 @@ class AgentCore:
         for k, v in new_config.items():
             if k in self.DEFAULT_CONFIG:
                 self.config[k] = v
+        preset = get_provider(self.config.get("provider_id"))
+        if preset:
+            self.config["base_url"] = preset["base_url"]
+            self.config["protocol"] = preset["protocol"]
+        elif self.config.get("provider_id") == "custom":
+            self.config["protocol"] = self.config.get("protocol", "chat")
         cfg_path = _cfg_path()
         with open(cfg_path, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)

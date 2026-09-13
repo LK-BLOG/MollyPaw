@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -79,7 +79,7 @@
           </svg>
         </button>
       </div>
-      <p class="input-hint" data-i18n="hint">MollyPaw Beta 0.0.0.1.1</p>
+      <p class="input-hint" data-i18n="hint">MollyPaw Beta 0.0.0.1.4</p>
     </div>
   </main>
 
@@ -92,16 +92,31 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
+          <label for="cfg-provider" data-i18n="provider_label">Provider</label>
+          <select id="cfg-provider"></select>
+        </div>
+        <div class="form-group">
           <label for="cfg-api-key" data-i18n="api_key_label">API Key</label>
           <input type="password" id="cfg-api-key" placeholder="sk-...">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="cfg-custom-url-group" style="display:none;">
           <label for="cfg-base-url" data-i18n="base_url_label">Base URL</label>
-          <input type="text" id="cfg-base-url" placeholder="https://api.openai.com/v1">
+          <input type="text" id="cfg-base-url" placeholder="https://api.example.com/v1">
+        </div>
+        <div class="form-group" id="cfg-protocol-group" style="display:none;">
+          <label for="cfg-protocol" data-i18n="protocol_label">API Protocol</label>
+          <select id="cfg-protocol">
+            <option value="chat" data-i18n="protocol_chat">OpenAI Chat Completions</option>
+            <option value="responses" data-i18n="protocol_responses">OpenAI Responses</option>
+          </select>
         </div>
         <div class="form-group">
           <label for="cfg-model" data-i18n="model_label">Model</label>
-          <input type="text" id="cfg-model" placeholder="gpt-3.5-turbo">
+          <div class="model-row">
+            <select id="cfg-model" disabled></select>
+            <button id="cfg-fetch-models" class="btn-secondary" type="button" data-i18n="fetch_models">拉取模型</button>
+          </div>
+          <input type="text" id="cfg-manual-model" class="manual-model" style="display:none;" placeholder="model-id">
         </div>
         <div class="form-group">
           <label for="cfg-temperature" data-i18n="temp_label">Temperature</label>

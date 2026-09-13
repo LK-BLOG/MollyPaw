@@ -1,6 +1,6 @@
-@echo off
+﻿@echo off
 echo ====================================
-echo  MollyPaw Builder - Beta 0.0.0.1
+echo  MollyPaw Builder - Beta 0.0.0.1.4
 echo ====================================
 echo.
 

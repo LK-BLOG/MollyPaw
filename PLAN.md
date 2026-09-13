@@ -1,9 +1,9 @@
-# MollyPaw 开发计划
+﻿# MollyPaw 开发计划
 
 ## 项目概览
 
 - **项目名称**: MollyPaw
-- **版本**: Beta 0.0.0.1.1
+- **版本**: Beta 0.0.0.1.4
 - **技术栈**: Python 3.9+ / PyWebView / HTML+CSS+JS
 - **目标**: 轻量级跨平台 AI Agent 桌面客户端
 - **灵感来源**: 摩尼（Molly）— 一只棕色白色的小泰迪犬
@@ -32,7 +32,7 @@
 
 - [x] frontend/index.html — 聊天界面
 - [x] frontend/style.css — 棕白配色样式
-- [x] frontend/app.js — JS 与 Python 通信
+- [x] frontend/app.js — HTTP API 通信
 - [x] 消息气泡组件
 - [x] 输入框和发送按钮
 
@@ -42,7 +42,7 @@
 - [x] 错误处理和加载状态
 - [x] 系统托盘支持（pystray）
 - [x] 打包为可执行文件（Windows，PyInstaller）
-- [ x] GitHub 发布 Beta 0.0.0.1
+- [ x] GitHub 发布 Beta 0.0.0.1.4
 
 ## 目录结构
 
@@ -90,7 +90,7 @@ webview.start()
 ### JS <-> Python 通信
 
 - Python 端：通过 window.expose() 暴露 API
-- JS 端：通过 window.pywebview.api.xxx() 调用
+- JS 端：通过 HTTP API 调用 `/api/*`
 
 ### 系统托盘
 

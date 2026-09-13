@@ -1,4 +1,4 @@
-# MollyPaw
+﻿# MollyPaw
 
 > **Your AI, right at your paw.**
 
@@ -84,7 +84,7 @@ MollyPaw/
 ┌─────────────────────────────────┐
 │         PyWebView 窗口           │
 │   (HTML + CSS + JS 前端)         │
-│         ↕ pywebview.api         │
+│         ↕ HTTP API             │
 │         Python 后端              │
 │   AgentCore → Provider → LLM    │
 │   ToolRegistry → FileTool       │
@@ -97,8 +97,8 @@ MollyPaw/
 └─────────────────────────────────┘
 ```
 
-- **前后端通信**：JS 调用 `window.pywebview.api.<method>()`，Python 返回 JSON 字符串
-- **异步聊天**：`send_message` 在后台线程执行，通过 `evaluate_js` 推送结果给前端
+- **前后端通信**：前端只通过 `http://127.0.0.1:18765/api/*` HTTP 接口通信
+- **异步事件**：前端轮询 `/api/events` 获取聊天、工具和审批事件
 - **宠物状态**：idle / work / cry / sleep，由主进程维护，宠物进程轮询
 
 ## 配置
@@ -107,10 +107,12 @@ MollyPaw/
 
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
-| `api_key` | LLM API 密钥 | — |
-| `model` | 模型名称 | `gpt-3.5-turbo` |
-| `base_url` | API 地址 | `https://api.openai.com/v1` |
-| `temperature` | 生成温度 | `0.7` |
+| `provider_id` | 供应商 ID | `openai` |
+| `api_key` | 当前供应商 API 密钥 | — |
+| `model` | 原始模型 ID | —（从供应商实时拉取） |
+| `base_url` | 自定义供应商 API 地址 | 内置供应商自动配置 |
+| `protocol` | `chat` 或 `responses` | 内置供应商自动配置 |
+| `temperature` | 生成温度（Kimi 等供应商可能不支持） | `0.7` |
 | `max_tokens` | 最大 token 数 | `2048` |
 
 ## 贡献指南

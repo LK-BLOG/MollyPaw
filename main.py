@@ -1,4 +1,4 @@
-"""MollyPaw - AI Agent Desktop Client + Desktop Pet"""
+﻿"""MollyPaw - AI Agent Desktop Client + Desktop Pet"""
 import sys
 import os
 import tempfile
@@ -46,6 +46,8 @@ except ImportError:
     HAS_TRAY = False
 
 from agent.core import AgentCore
+from agent.providers.catalog import public_providers, get_provider
+from agent.providers.openai_provider import OpenAIProvider
 
 
 class MollyPawAPI:
@@ -53,35 +55,25 @@ class MollyPawAPI:
 
     def __init__(self):
         self.agent = None
-        self.window = None
         self.pet_state = "idle"  # idle | work | cry | sleep
         self._last_activity = time.time()
         self._idle_threshold = 30
         self._sleep_timer_started = False
         # Approval system
         self._pending_approvals = {}  # request_id -> {"event": threading.Event, "approved": bool}
+        self._events = []
+        self._events_lock = threading.Lock()
         self._approval_mode = "prompt_dangerous"  # full_access | prompt_all | prompt_dangerous
-
-    def set_window(self, window):
-        self.window = window
 
     # -- Tool call & approval callbacks ------------------------------------
 
     def _tool_call_callback(self, info):
-        """Called by AgentCore before each tool execution. Notifies frontend."""
-        if self.window:
-            payload = json.dumps(info, ensure_ascii=False)
-            self.window.evaluate_js(
-                f"window._onToolCall && window._onToolCall({payload})"
-            )
+        """Queue a tool-call event for the HTTP client."""
+        self._queue_event("_onToolCall", info)
 
     def _tool_result_callback(self, info):
-        """Called by AgentCore after tool execution or rejection. Notifies frontend."""
-        if self.window:
-            payload = json.dumps(info, ensure_ascii=False)
-            self.window.evaluate_js(
-                f"window._onToolResult && window._onToolResult({payload})"
-            )
+        """Queue a tool-result event for the HTTP client."""
+        self._queue_event("_onToolResult", info)
 
     def _approval_request_callback(self, info):
         """Called by AgentCore when approval is needed. Blocks until user decides."""
@@ -89,12 +81,7 @@ class MollyPawAPI:
         event = threading.Event()
         self._pending_approvals[request_id] = {"event": event, "approved": False}
 
-        # Notify frontend with request_id
-        payload = json.dumps({**info, "request_id": request_id}, ensure_ascii=False)
-        if self.window:
-            self.window.evaluate_js(
-                f"window._onApprovalRequest && window._onApprovalRequest({payload})"
-            )
+        self._queue_event("_onApprovalRequest", {**info, "request_id": request_id})
 
         # Block until approved/rejected or timeout (120s)
         event.wait(timeout=120)
@@ -194,6 +181,10 @@ class MollyPawAPI:
                 try:
                     if self.path == "/state":
                         self._send_json({"state": api_ref.pet_state})
+                    elif self.path == "/api/providers":
+                        self._send_json({"ok": True, "providers": public_providers()})
+                    elif self.path == "/api/events":
+                        self._send_json(api_ref.get_events())
                     elif self.path == "/api/config":
                         def _work():
                             try:
@@ -279,6 +270,38 @@ class MollyPawAPI:
                                 api_ref._start_sleep_timer()
                                 api_ref._push_result("_onChatResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
                         threading.Thread(target=_chat, daemon=True).start()
+                        self._send_json({"ok": True, "pending": True})
+                    elif self.path == "/api/models":
+                        def _models():
+                            try:
+                                request = json.loads(body)
+                                provider_id = request.get("provider_id", "custom")
+                                preset = get_provider(provider_id)
+                                if preset:
+                                    base_url = preset["base_url"]
+                                    protocol = preset["protocol"]
+                                    models_path = preset.get("models_path", "/models")
+                                    auth_mode = preset.get("auth_mode", "bearer")
+                                    supports_temperature = preset.get("supports_temperature", True)
+                                else:
+                                    base_url = request.get("base_url", "")
+                                    protocol = request.get("protocol", "chat")
+                                    models_path = "/models"
+                                    auth_mode = "bearer"
+                                    supports_temperature = True
+                                provider = OpenAIProvider(
+                                    api_key=request.get("api_key", ""),
+                                    base_url=base_url,
+                                    protocol=protocol,
+                                    models_path=models_path,
+                                    auth_mode=auth_mode,
+                                    supports_temperature=supports_temperature,
+                                )
+                                models = provider.list_models()
+                                api_ref._push_result("_onModelsResult", json.dumps({"ok": True, "models": models}, ensure_ascii=False))
+                            except Exception as e:
+                                api_ref._push_result("_onModelsResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                        threading.Thread(target=_models, daemon=True).start()
                         self._send_json({"ok": True, "pending": True})
                     elif self.path == "/api/config":
                         def _save():
@@ -380,10 +403,7 @@ class MollyPawAPI:
                 self.pet_state = "cry"
                 self._start_sleep_timer()
                 result = json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
-            if self.window:
-                self.window.evaluate_js(
-                    "window._onChatResult && window._onChatResult(" + result + ")"
-                )
+            self._queue_event("_onChatResult", json.loads(result))
 
         threading.Thread(target=_do_chat, daemon=True).start()
         return json.dumps({"ok": True, "pending": True}, ensure_ascii=False)
@@ -428,14 +448,22 @@ class MollyPawAPI:
 
     # -- Config & utils ----------------------------------------------------
 
+    def _queue_event(self, name, payload):
+        with self._events_lock:
+            self._events.append({"name": name, "payload": payload})
+
     def _push_result(self, callback, result):
-        if self.window:
-            try:
-                self.window.evaluate_js(
-                    f"window.{callback} && window.{callback}({result})"
-                )
-            except Exception:
-                pass
+        try:
+            payload = json.loads(result) if isinstance(result, str) else result
+        except (TypeError, json.JSONDecodeError):
+            payload = result
+        self._queue_event(callback, payload)
+
+    def get_events(self):
+        with self._events_lock:
+            events = self._events
+            self._events = []
+        return {"ok": True, "events": events}
 
     def get_config(self):
         def _work():
@@ -777,11 +805,8 @@ def main():
         width=1000,
         height=700,
         min_size=(800, 600),
-        js_api=api,
         text_select=True,
     )
-    api.set_window(window)
-
     # Launch pet as a real subprocess (survives window close)
     threading.Thread(target=start_pet, daemon=True).start()
 

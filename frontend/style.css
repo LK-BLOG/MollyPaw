@@ -1,4 +1,4 @@
-/* MollyPaw - Warm Brown & White Theme */
+﻿/* MollyPaw - Warm Brown & White Theme */
 
 :root {
   --deep-brown: #6B4226;
@@ -833,3 +833,8 @@ body {
   text-decoration: line-through;
   opacity: 0.6;
 }
+
+.model-row { display: flex; gap: 8px; align-items: center; }
+.model-row select { flex: 1; min-width: 0; }
+.model-row button { flex: 0 0 auto; width: auto; padding: 9px 12px; }
+.manual-model { margin-top: 8px; }
