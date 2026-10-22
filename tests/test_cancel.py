@@ -174,6 +174,40 @@ def test_kill_process_tree_no_pid():
     assert kill_process_tree(0) is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 专属：Windows 没有进程组，走 taskkill /T")
+def test_kill_process_tree_does_not_kill_own_group():
+    """**不能连带杀掉自己这一组**。
+
+    这是个真 bug：POSIX 下无条件 `os.killpg(os.getpgid(pid), SIGTERM)`，
+    而目标进程若没独立成组（没带 start_new_session=True），
+    getpgid(pid) 返回的就是**父进程（pytest / 你的应用）的组** ——
+    一发信号，整个进程连带被杀。
+
+    实测：CI 上 pytest 跑到第 18 个测试就整体退出（exit 143）。
+    """
+    import subprocess
+
+    # 故意**不**用 start_new_session=True —— 就是要复现"同组"这个危险场景
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(5)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        own_group = os.getpgid(0)
+        target_group = os.getpgid(proc.pid)
+        assert target_group == own_group, "这个测试需要目标与自己同组"
+
+        # 调用不能把整组杀掉 —— 也就是不能把我们自己干掉
+        assert kill_process_tree(proc.pid) is True
+        # 如果还活着（SIGTERM 没立刻生效）也没关系，重点是"我们还活着"
+        time.sleep(0.3)
+        assert os.getpgid(0) == own_group
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
 def test_kill_process_tree_kills_real_process():
     import subprocess
 

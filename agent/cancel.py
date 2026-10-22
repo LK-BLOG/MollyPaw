@@ -153,6 +153,13 @@ def kill_process_tree(pid, timeout=3.0):
     （`subprocess.kill()` 只杀直接子进程）。POSIX 走进程组。
 
     返回 True 表示成功杀掉了东西。
+
+    **POSIX 下的关键防护**：不能无条件 `os.killpg(os.getpgid(pid), ...)`。
+    如果目标进程没有独立成组（没带 `start_new_session=True` / `setsid`），
+    `getpgid(pid)` 返回的就是**我们自己的进程组** —— 一发信号，
+    父进程（pytest、你的应用）跟着一起死。
+    实测就是这个坑：CI 上 pytest 跑到第 18 个测试就整体被杀（exit 143）。
+    所以这里必须先比对进程组，不同才 killpg。
     """
     if not pid:
         return False
@@ -171,12 +178,37 @@ def kill_process_tree(pid, timeout=3.0):
         except Exception:
             return False
 
-    # POSIX：先试进程组，再退回单进程
+    # POSIX
     try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except Exception:
+        target_group = os.getpgid(pid)
+        own_group = os.getpgid(0)
+    except (OSError, ProcessLookupError):
+        target_group = None
+        own_group = None
+
+    if target_group is not None and target_group == own_group:
+        # 目标和我们同组 —— killpg 会连自己一起杀。只杀单个进程。
+        return _kill_one(pid)
+
+    if target_group is not None:
         try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            return False
-    return True
+            os.killpg(target_group, signal.SIGKILL)
+            return True
+        except OSError:
+            pass
+
+    return _kill_one(pid)
+
+
+def _kill_one(pid):
+    """杀单个进程。
+
+    用 SIGKILL 而不是 SIGTERM：用户点"停止"是要**立刻**停，
+    SIGTERM 只是"请求退出" —— 对方可以忽略它，进程照样跑。
+    Windows 那边 taskkill /F 也是强杀，两边语义一致。
+    """
+    try:
+        os.kill(pid, signal.SIGKILL)
+        return True
+    except OSError:
+        return False
