@@ -1,4 +1,4 @@
-﻿# MollyPaw
+# MollyPaw
 
 > **Your AI, right at your paw.**
 
@@ -62,21 +62,54 @@ MollyPaw/
 ├── requirements.txt     # Python 依赖
 ├── config.json          # 运行时配置（gitignored，需手动创建或通过设置面板配置）
 ├── agent/               # Agent 核心逻辑
-│   ├── core.py          # Agent 核心：聊天循环 + 工具调用（最多 10 轮）
+│   ├── core.py          # Agent 核心：聊天循环 + 工具调用 + 流式 + 取消
+│   ├── service.py       # 业务门面（本地 UI 与远程设备共用）
+│   ├── cancel.py        # 取消令牌（停止按钮的底座）
+│   ├── relay/           # 远程互联（加密 / 中继客户端 / 设备管理 / 二维码）
 │   ├── providers/       # LLM Provider（OpenAI 兼容接口）
-│   └── tools/           # Agent 工具（read_file / write_file / list_directory）
+│   └── tools/           # Agent 工具（文件 / 命令 / 记忆 / 技能 / 网页）
 ├── frontend/            # 前端界面（纯 HTML/CSS/JS，无构建步骤）
 │   ├── index.html
 │   ├── style.css
 │   └── app.js
 ├── assets/              # 资源文件（Logo + 宠物精灵图）
 │   └── pet/             # 宠物状态图片（idle / work / cry / sleep）
-├── scripts/             # 工具脚本
-│   └── gen_pet_assets.py  # 用 AI 生成宠物精灵图
+├── tools/               # 工具脚本（CLI 模拟手机、截图验收、诊断）
+├── tests/               # pytest 测试
 ├── BRAND.md             # 品牌指南（配色、字体、语气）
 ├── CONTRIBUTING.md      # 贡献指南
-└── PLAN.md              # 开发计划
+├── CHANGELOG.md         # 变更记录
+└── pytest.ini
 ```
+
+## 远程互联（手机 ↔ 电脑）
+
+手机通过 Cloudflare 中继连上这台电脑，全程端到端加密。
+
+```
+Android App ──wss──┐
+                   ├──> wss://mollypaw-online.pages.dev/server
+PC (MollyPaw) ─wss─┘         │
+                             └──> Durable Object（盲转发，只路由不解析）
+```
+
+**关键点**
+
+- **中继看不到内容**：所有业务帧都是 AES-256-GCM 密文，AAD 绑定房间/角色/序号。
+- **一键配对**：设置里点「添加设备」出二维码，扫一下就连上 —— 手机不用手输密钥。
+  配对码 15 分钟有效、一次性。
+- **不装新依赖**：二维码是自写的编码器（`agent/relay/qr.py`），
+  与标准实现逐模块比对验证过。
+
+**在电脑上开启**：设置 → 远程互联 → 选「官方中继」→ 开启 → 添加设备。
+
+**相关仓库**
+
+- `MollyPaw-Relay` — 中继（Cloudflare Worker + Pages Function + 本地开发用 Python 中继）
+- `MollyPaw-Android` — 安卓客户端（Kotlin + Compose）
+
+**不想用手机？** 有个命令行版模拟手机（`tools/mp_phone.py`），
+不需要真机就能验证整条链路。
 
 ## 架构说明
 

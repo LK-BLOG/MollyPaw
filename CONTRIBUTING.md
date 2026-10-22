@@ -59,6 +59,21 @@ MollyPaw/
 - 新功能请尽量写注释，方便其他人理解
 - 提交信息用中文或英文都可以，但要简短清楚
 
+## 架构红线（必须遵守）
+
+前后端通信**只走本地 HTTP API**，这是硬性约束：
+
+- 前端通过 `frontend/app.js` 里的 `getAPI()` / `postAPI()` 调用 `http://127.0.0.1:18765/api/*`
+- 后端由 `main.py` 的 `ThreadingHTTPServer`（端口 18765）提供，同时负责托管前端页面和宠物精灵图
+- 耗时操作（如 `AgentCore.chat()`）放在后台线程执行；接口先立刻返回 `{"ok": true, "pending": true}`，
+  真正的结果作为事件入队，前端轮询 `GET /api/events` 取回
+
+**禁止使用 `window.pywebview.api` 或 `js_api`。**
+`webview.create_window()` 没有传 `js_api=`，因此这类调用永远不会 resolve ——
+表现是「点了没反应、也不报错」，属于 100% 挂死。历史上有过这个坑，不要再引入。
+
+新增接口请遵循同样的模式：在 `main.py` 加 `/api/xxx` 路由，在 `app.js` 加对应的 `getAPI()` / `postAPI()` 调用。
+
 ## 添加新的 LLM Provider
 
 MollyPaw 支持扩展 LLM Provider。如果你想添加新的 Provider：

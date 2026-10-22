@@ -112,6 +112,9 @@ class MemoryTool:
             return "Error: MemoryTool has no method '%s'" % func_name
         return method(**arguments)
 
+    def get_all(self):
+        return self._load_all()
+
     def _load_all(self):
         memories = []
         for fname in os.listdir(self._mem_dir):

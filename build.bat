@@ -1,6 +1,6 @@
 ﻿@echo off
 echo ====================================
-echo  MollyPaw Builder - Beta 0.0.0.1.4
+echo  MollyPaw Builder - Beta 0.0.0.1.5
 echo ====================================
 echo.
 
@@ -12,9 +12,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if not exist .venv\Scripts\python.exe python -m venv .venv
+set PY=.venv\Scripts\python.exe
+
 REM Install dependencies
 echo [1/3] Installing dependencies...
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+%PY% -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies
     pause
@@ -23,7 +26,7 @@ if errorlevel 1 (
 
 echo.
 echo [2/3] Building executable with PyInstaller...
-pyinstaller ^
+%PY% -m PyInstaller ^
     --name MollyPaw ^
     --onefile ^
     --windowed ^
@@ -34,6 +37,11 @@ pyinstaller ^
     --add-data "assets;assets" ^
     --add-data "agent;agent" ^
     --add-data "pet.py;." ^
+    --exclude-module PyQt5 ^
+    --exclude-module PySide6 ^
+    --exclude-module aiohttp ^
+    --exclude-module torch ^
+    --exclude-module transformers ^
     --hidden-import pystray ^
     --hidden-import PIL ^
     --hidden-import PIL._tkinter_finder ^
@@ -53,7 +61,7 @@ copy /Y BRAND.md dist\BRAND.md >nul 2>&1
 copy /Y CONTRIBUTING.md dist\CONTRIBUTING.md >nul 2>&1
 copy /Y requirements.txt dist\requirements.txt >nul 2>&1
 mkdir dist\config >nul 2>&1
-echo {} > dist\config\default.json
+%PY% -c "import json,os; os.makedirs(r'dist\config',exist_ok=True); json.dump({'sleep':{'mode':'off','tasks':['memory','review','dream'],'idle_minutes':0.5,'max_llm_calls':100}}, open(r'dist\config\default.json','w',encoding='utf-8'), ensure_ascii=False, indent=2)"
 
 echo.
 echo ====================================

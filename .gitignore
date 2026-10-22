@@ -24,6 +24,9 @@ AGENTS.md
 data/
 .mimocode/
 
+# 验收用的截图产物（tools/shot_settings.py 生成）
+shots/
+
 # Skills: ignore subdirectories (each skill) but keep the skills/ dir itself
 skills/*/
 scripts/

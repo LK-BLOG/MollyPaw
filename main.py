@@ -1,4 +1,4 @@
-﻿"""MollyPaw - AI Agent Desktop Client + Desktop Pet"""
+"""MollyPaw - AI Agent Desktop Client + Desktop Pet"""
 import sys
 import os
 import tempfile
@@ -48,22 +48,82 @@ except ImportError:
 from agent.core import AgentCore
 from agent.providers.catalog import public_providers, get_provider
 from agent.providers.openai_provider import OpenAIProvider
+from agent.sleep import SleepCycle
+from agent.service import MollyPawService
+
+# 远程互联是可选功能：cryptography / websocket-client 缺了就不启用，
+# 不能让整个应用打不开。用户装一次 requirements.txt 就有了。
+try:
+    from agent.relay.manager import RelayManager, DEFAULT_RELAY_URL
+    from agent.relay import crypto as relay_crypto
+    HAS_RELAY = True
+    RELAY_IMPORT_ERROR = ""
+except Exception as _relay_exc:  # pragma: no cover - 取决于环境
+    RelayManager = None
+    relay_crypto = None
+    DEFAULT_RELAY_URL = "wss://mollypaw-online.pages.dev/server"
+    HAS_RELAY = False
+    RELAY_IMPORT_ERROR = str(_relay_exc)
+
+
+def _load_json_payload(payload, default=None):
+    """把 HTTP body / JSON 字符串 / dict 统一成 dict。
+
+    `_read_body()` 给的是 bytes，`json.loads` 也吃 bytes，
+    但曾经有代码直接把 bytes 当 dict 用 `**` 展开，炸出
+    "argument after ** must be a mapping, not bytes"。
+    统一走这个函数，避免每个接口各写一遍。
+    """
+    if payload is None or payload == "":
+        return {} if default is None else default
+    if isinstance(payload, (bytes, bytearray)):
+        payload = payload.decode("utf-8", errors="replace")
+    if isinstance(payload, str):
+        text = payload.strip()
+        if not text:
+            return {} if default is None else default
+        value = json.loads(text)
+    else:
+        value = payload
+    if not isinstance(value, dict):
+        raise ValueError("payload must be a JSON object")
+    return value
 
 
 class MollyPawAPI:
-    """API exposed to the frontend via pywebview."""
+    """API exposed to the frontend via pywebview.
+
+    业务逻辑都在 agent/service.py 的 MollyPawService 里 ——
+    本地 UI（HTTP）和远程手机（中继）共用同一份实现，
+    这样单飞锁 / 取消 / 审批只有一处，不会出现两边打架。
+    """
 
     def __init__(self):
         self.agent = None
         self.pet_state = "idle"  # idle | work | cry | sleep
         self._last_activity = time.time()
-        self._idle_threshold = 30
-        self._sleep_timer_started = False
+        self.sleep_cycle = None
         # Approval system
         self._pending_approvals = {}  # request_id -> {"event": threading.Event, "approved": bool}
         self._events = []
         self._events_lock = threading.Lock()
-        self._approval_mode = "prompt_dangerous"  # full_access | prompt_all | prompt_dangerous
+        self._approval_mode = "prompt_dangerous"
+
+        # 业务服务（单飞锁 / 取消 / 审批的唯一真源）
+        self.service = MollyPawService(
+            logger=lambda m: print(f"[MollyPaw] {m}")
+        )
+        self.service._approval_mode = self._approval_mode
+        # 远程互联
+        self.relay = None
+        self._relay_lock = threading.RLock()
+        # 本地聊天线程当前用的取消令牌（供停止按钮）
+        self._local_token = None
+
+    # -- 业务转发（保持旧签名，前端不用改）---------------------------------
+
+    def _sync_pet(self):
+        self.pet_state = self.service.pet_state
 
     # -- Tool call & approval callbacks ------------------------------------
 
@@ -76,36 +136,263 @@ class MollyPawAPI:
         self._queue_event("_onToolResult", info)
 
     def _approval_request_callback(self, info):
-        """Called by AgentCore when approval is needed. Blocks until user decides."""
-        request_id = str(uuid.uuid4())
-        event = threading.Event()
-        self._pending_approvals[request_id] = {"event": event, "approved": False}
+        """Called by AgentCore when approval is needed. Blocks until user decides.
 
-        self._queue_event("_onApprovalRequest", {**info, "request_id": request_id})
-
-        # Block until approved/rejected or timeout (120s)
-        event.wait(timeout=120)
-        result = self._pending_approvals.pop(request_id, {"approved": False})
-        return result.get("approved", False)
+        走 service 的控制器：**不再有 120 秒超时**。
+        理由：手机不在跟前时超时自动拒绝会让工具调用莫名失败，
+        用户回头根本不知道发生过什么。
+        """
+        result = self.service._approval_request_callback(info)
+        return result
 
     def approve_tool(self, request_json):
         """Called by frontend to approve/reject a tool call."""
         try:
-            data = json.loads(request_json) if isinstance(request_json, str) else request_json
+            data = _load_json_payload(request_json)
             request_id = data.get("request_id", "")
             approved = data.get("approved", False)
+            ok = self.service.approve_tool(request_id, approved)
+            # 兼容旧的本地 pending 表
             pending = self._pending_approvals.get(request_id)
             if pending:
                 pending["approved"] = approved
                 pending["event"].set()
+            return json.dumps({"ok": True, "resolved": ok}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    # -- 停止按钮 ----------------------------------------------------------
+
+    def stop_chat(self, payload_json="{}"):
+        """停止当前这一轮 agent。
+
+        本地 UI 和手机共用同一个 controller，所以任何一边点停止都立刻生效。
+        """
+        try:
+            data = _load_json_payload(payload_json)
+            by = data.get("by", "local")
+        except Exception:
+            by = "local"
+        stopped = self.service.stop_chat(by=by)
+        self.pet_state = "idle"
+        self._queue_event("_onChatStopped", {"by": by, "stopped": bool(stopped)})
+        return json.dumps({"ok": True, "stopped": bool(stopped)}, ensure_ascii=False)
+
+    # -- 远程互联 ----------------------------------------------------------
+
+    def _ensure_relay(self):
+        """懒加载远程互联。缺依赖时抛一个带指引的错误，而不是崩掉。"""
+        if not HAS_RELAY:
+            raise RuntimeError(
+                "远程互联需要额外依赖，请运行：pip install -r requirements.txt"
+                + (f"（{RELAY_IMPORT_ERROR}）" if RELAY_IMPORT_ERROR else "")
+            )
+        with self._relay_lock:
+            if self.relay is None:
+                relay_cfg = {}
+                try:
+                    agent = self.service._ensure_agent()
+                    relay_cfg = dict(agent.config.get("relay") or {})
+                except Exception:
+                    pass
+                self.relay = RelayManager(
+                    self.service,
+                    config=relay_cfg,
+                    logger=lambda m: print(f"[MollyPaw] {m}"),
+                    config_saver=self._save_relay_config,
+                )
+            return self.relay
+
+    def _save_relay_config(self, cfg):
+        """把中继配置写进 config.json 的 relay 字段。"""
+        from agent.paths import config_path as _cfg
+
+        path = _cfg()
+        data = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        data["relay"] = cfg
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def relay_start(self):
+        try:
+            st = self._ensure_relay().start()
+            return json.dumps({"ok": True, **st}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "running": False, "state": "error",
+                               "error": str(e)}, ensure_ascii=False)
+
+    def relay_stop(self):
+        try:
+            mgr = self._ensure_relay()
+            st = mgr.stop()
+            return json.dumps({"ok": True, **st}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def relay_status(self):
+        """返回扁平的状态对象，前端 renderRelayStatus 直接吃这些字段。"""
+        try:
+            st = self._ensure_relay().status()
+            return json.dumps({"ok": True, **st}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "running": False, "state": "error",
+                               "error": str(e)}, ensure_ascii=False)
+
+    def relay_settings(self, payload_json="{}"):
+        """读取/更新中继设置（url / psk / auto_start）。
+
+        注意：psk 太弱**不算接口错误** —— 设置确实存下来了，
+        问题以 psk_problems 的形式回给前端显示。
+
+        payload 可能是 str、bytes（HTTP body 原样）或 dict，
+        所以这里统一解码，不要直接 ** 展开。
+        """
+        try:
+            mgr = self._ensure_relay()
+            data = _load_json_payload(payload_json)
+            if data:
+                mgr.set_config(**data)
+            psk = mgr.config.get("psk") or ""
+            return json.dumps({
+                "ok": True,
+                "url": mgr.config.get("url") or DEFAULT_RELAY_URL,
+                # 回传明文 PSK：本地 UI 本来就能读 config.json（里面还有 api_key），
+                # 不回传的结果是"保存后用户再也看不到自己的密钥"，
+                # 而这串密钥是要手动抄到手机上的。
+                # 注意：这个 HTTP 服务只监听 127.0.0.1，不对外。
+                "psk": psk,
+                "psk_set": bool(psk),
+                "psk_problems": relay_crypto.psk_problems(psk) if psk else [],
+                "auto_start": bool(mgr.config.get("auto_start")),
+                "room": mgr.room(),
+                **mgr.status(),
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def relay_pin(self, payload_json="{}"):
+        """生成配对码（一键导入）。可带 role=app|observer。
+
+        返回里带 qr_png（base64 PNG），前端可直接显示二维码。
+        配对码形如 MP1.<b64(reg_token)>.<room>，含房间号 ——
+        所以手机端**只需要扫码**，不必先知道 PSK 就能找到房间。
+        """
+        try:
+            mgr = self._ensure_relay()
+            try:
+                data = _load_json_payload(payload_json)
+            except Exception:
+                data = {}
+            role = data.get("role", "app")
+            session = mgr.new_pairing(role)
+            if not session.get("ok"):
+                return json.dumps(session, ensure_ascii=False)
+            self._attach_qr(session, mgr)
+            return json.dumps(session, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    @staticmethod
+    def _attach_qr(session, mgr):
+        """把配对码渲染成二维码塞进响应（失败也不影响配对本身）。"""
+        try:
+            import base64 as _b64
+
+            png = mgr.pairing_qr_png(session["code"], scale=7)
+            session["qr_png"] = _b64.b64encode(png).decode("ascii")
+        except Exception as exc:
+            session["qr_error"] = str(exc)
+
+    def relay_pin_current(self):
+        """当前还有效的配对码（供 UI 恢复显示）。"""
+        try:
+            mgr = self._ensure_relay()
+            session = mgr.current_pairing()
+            if not session:
+                return json.dumps({"ok": True, "pin": None}, ensure_ascii=False)
+            self._attach_qr(session, mgr)
+            return json.dumps({"ok": True, "pin": session}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def relay_pin_cancel(self):
+        try:
+            self._ensure_relay().cancel_pairings()
             return json.dumps({"ok": True}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def relay_devices_purge(self, payload_json="{}"):
+        """清退设备。
+
+        mode=revoke（默认）: 全部标记为已吊销 —— 设备即便拿到新 PSK 也进不来
+        mode=clear         : 直接删掉全部记录
+
+        换 PSK 时由用户决定要不要调这个。为什么需要：
+        换 PSK 只让老设备「连不上」（房间号变了），
+        devices.json 里的授权记录一条没动，它拿到新密钥照样能连进来。
+        这是实测结论，见 tools/audit_psk_room.py。
+        """
+        try:
+            mgr = self._ensure_relay()
+            try:
+                data = _load_json_payload(payload_json)
+            except Exception:
+                data = {}
+            mode = data.get("mode", "revoke")
+            if mode == "clear":
+                count = mgr.clear_devices()
+            else:
+                count = mgr.revoke_all_devices()
+            return json.dumps({"ok": True, "mode": mode, "count": count},
+                              ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def relay_devices(self):
+        try:
+            mgr = self._ensure_relay()
+            return json.dumps({"ok": True, "devices": mgr.list_devices()},
+                              ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def relay_device_revoke(self, payload_json):
+        try:
+            data = _load_json_payload(payload_json)
+            mgr = self._ensure_relay()
+            dev_id = data.get("dev_id", "")
+            if data.get("remove"):
+                ok = mgr.remove_device(dev_id)
+            else:
+                ok = mgr.revoke_device(dev_id)
+            return json.dumps({"ok": bool(ok)}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def relay_audit(self, limit_json="{}"):
+        try:
+            limit = 200
+            try:
+                data = _load_json_payload(limit_json)
+                limit = int(data.get("limit", 200))
+            except Exception:
+                pass
+            return json.dumps({"ok": True, "entries": self._ensure_relay().fs_audit(limit)},
+                              ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
     def set_approval_mode(self, mode_json):
         """Set the approval mode: 'full_access', 'prompt_all', or 'prompt_dangerous'."""
         try:
-            data = json.loads(mode_json) if isinstance(mode_json, str) else mode_json
+            data = _load_json_payload(mode_json)
             mode = data.get("mode", "prompt_dangerous")
             if mode not in ("full_access", "prompt_all", "prompt_dangerous"):
                 return json.dumps({"ok": False, "error": "Invalid mode"}, ensure_ascii=False)
@@ -130,32 +417,106 @@ class MollyPawAPI:
         """Get the current approval mode."""
         return json.dumps({"mode": self._approval_mode}, ensure_ascii=False)
 
+    def set_thinking_level(self, level_json):
+        try:
+            data = _load_json_payload(level_json)
+            level = data.get("level", "none")
+            if level not in ("none", "low", "medium", "high", "max"):
+                return json.dumps({"ok": False, "error": "Invalid thinking level"}, ensure_ascii=False)
+            agent = self._ensure_agent()
+            agent.save_config({"thinking_level": level})
+            if self.sleep_cycle:
+                self.sleep_cycle.provider = agent.provider
+            return json.dumps({"ok": True, "level": level}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+    def _mark_activity(self):
+        if self.sleep_cycle:
+            self.sleep_cycle.mark_activity()
+
+    def get_sleep_settings(self):
+        try:
+            agent = self._ensure_agent()
+            return json.dumps({
+                "ok": True,
+                "sleep": agent.config.get("sleep", {}),
+                "status": self.sleep_cycle.get_status() if self.sleep_cycle else {},
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    def save_sleep_settings(self, settings_json):
+        try:
+            data = _load_json_payload(settings_json)
+            if not isinstance(data, dict):
+                raise ValueError("Invalid sleep settings")
+            mode = data.get("mode", "off")
+            if mode not in ("off", "display_only", "full"):
+                raise ValueError("Invalid sleep mode")
+            tasks = data.get("tasks", ["memory", "review", "dream"])
+            if not isinstance(tasks, list):
+                raise ValueError("Invalid sleep tasks")
+            tasks = [task for task in ("memory", "review", "dream") if task in tasks]
+            try:
+                max_llm_calls = max(0, int(data.get("max_llm_calls", 100)))
+            except (TypeError, ValueError):
+                raise ValueError("Invalid max llm calls")
+            sleep = {"mode": mode, "tasks": tasks, "idle_minutes": 0.5, "max_llm_calls": max_llm_calls}
+            agent = self._ensure_agent()
+            agent.save_config({"sleep": sleep})
+            if self.sleep_cycle:
+                self.sleep_cycle.provider = agent.provider
+                self.sleep_cycle.reload_config()
+            self._mark_activity()
+            return json.dumps({"ok": True, "sleep": sleep, "status": self.sleep_cycle.get_status() if self.sleep_cycle else {}}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
     def _ensure_agent(self):
-        """Ensure AgentCore exists with callbacks attached."""
-        if self.agent is None:
-            self.agent = AgentCore()
-            self.agent.set_tool_call_callback(self._tool_call_callback)
-            self.agent.set_tool_result_callback(self._tool_result_callback)
-            self.agent.set_approval_callback(self._approval_request_callback)
-            self.agent.approval_mode = self._approval_mode
-        return self.agent
+        """Ensure AgentCore exists with callbacks attached.
+
+        实际由 service 持有；这里返回同一个实例，
+        保证 HTTP 层和远程中继操作的是同一个 agent（同一个 history / 同一个单飞锁）。
+        """
+        agent = self.service._ensure_agent()
+        self.agent = agent
+        self.sleep_cycle = self.service.sleep_cycle
+        return agent
 
     # -- Pet server --------------------------------------------------------
 
-    def start_pet_server(self):
-        """Start a local HTTP server to serve pet assets + state API."""
+    def start_pet_server(self, host="127.0.0.1", port=18765):
+        """Start a local HTTP server to serve pet assets + state API.
+
+        port 可传 0 让系统分配（测试用），避免和已运行的实例抢端口。
+        """
         pet_dir = os.path.join(_base_dir(), "assets", "pet")
         api_ref = self
 
         class PetHandler(http.server.BaseHTTPRequestHandler):
+            # 客户端在响应写完之前就断开时会抛这几个异常。
+            # 它们是**正常现象**（浏览器关页、前端轮询被打断），
+            # 不该在控制台刷 traceback —— 用户看到满屏红字会以为程序坏了。
+            CLIENT_GONE = (
+                ConnectionAbortedError,
+                BrokenPipeError,
+                ConnectionResetError,
+            )
+
             def _send_json(self, data):
                 body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                    self.send_header("Pragma", "no-cache")
+                    self.send_header("Expires", "0")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except self.CLIENT_GONE:
+                    # 对方先挂了，这条响应没人在等 —— 静默丢掉
+                    pass
 
             def _read_body(self):
                 length = int(self.headers.get("Content-Length", 0))
@@ -163,7 +524,6 @@ class MollyPawAPI:
 
             def do_OPTIONS(self):
                 self.send_response(204)
-                self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
                 self.end_headers()
@@ -173,6 +533,9 @@ class MollyPawAPI:
                     data = f.read()
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -185,6 +548,17 @@ class MollyPawAPI:
                         self._send_json({"ok": True, "providers": public_providers()})
                     elif self.path == "/api/events":
                         self._send_json(api_ref.get_events())
+                    elif self.path == "/api/balance":
+                        def _balance():
+                            try:
+                                agent = api_ref._ensure_agent()
+                                preset = get_provider(agent.config.get("provider_id")) or {}
+                                result = agent.provider.get_balance(preset.get("balance_path", agent.config.get("balance_path", "")), preset.get("balance_parser", ""), preset.get("balance_base_url", ""))
+                            except Exception as e:
+                                result = {"ok": False, "supported": False, "error": str(e)}
+                            api_ref._push_result("_onBalanceResult", result)
+                        threading.Thread(target=_balance, daemon=True).start()
+                        self._send_json({"ok": True, "pending": True})
                     elif self.path == "/api/config":
                         def _work():
                             try:
@@ -197,6 +571,8 @@ class MollyPawAPI:
                         self._send_json({"ok": True, "pending": True})
                     elif self.path == "/api/approval_mode":
                         self._send_json({"mode": api_ref._approval_mode})
+                    elif self.path == "/api/sleep":
+                        self._send_json(json.loads(api_ref.get_sleep_settings()))
                     elif self.path == "/api/skills":
                         def _work():
                             try:
@@ -217,6 +593,30 @@ class MollyPawAPI:
                                 api_ref._push_result("_onConversationsResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
                         threading.Thread(target=_work, daemon=True).start()
                         self._send_json({"ok": True, "pending": True})
+                    # -- 远程互联（GET：只读查询，直接同步返回，不走事件队列）
+                    # 这些必须在 do_GET 里 —— 放在 do_POST 会让前端拿 404。
+                    elif self.path == "/api/relay/status":
+                        self._send_json(json.loads(api_ref.relay_status()))
+                    elif self.path == "/api/relay/settings":
+                        self._send_json(json.loads(api_ref.relay_settings("{}")))
+                    elif self.path == "/api/relay/devices":
+                        self._send_json(json.loads(api_ref.relay_devices()))
+                    elif self.path == "/api/relay/pin":
+                        self._send_json(json.loads(api_ref.relay_pin_current()))
+                    elif self.path == "/api/relay/audit":
+                        self._send_json(json.loads(api_ref.relay_audit("{}")))
+                    elif self.path == "/api/relay/available":
+                        self._send_json({"ok": True, "available": HAS_RELAY,
+                                         "error": RELAY_IMPORT_ERROR})
+                    elif self.path == "/api/busy":
+                        # controller 只有在 service 初始化完成后才有；
+                        # 没起来时如实回 false，不要 AttributeError 把连接打断。
+                        ctrl = getattr(api_ref.service, "controller", None)
+                        self._send_json({
+                            "ok": True,
+                            "busy": bool(ctrl.busy) if ctrl else False,
+                            "owner": ctrl.owner if ctrl else None,
+                        })
                     elif self.path == "/" or self.path == "/index.html":
                         frontend_dir = os.path.join(_base_dir(), "frontend")
                         self._serve_file(os.path.join(frontend_dir, "index.html"), "text/html; charset=utf-8")
@@ -244,36 +644,85 @@ class MollyPawAPI:
                             self.wfile.write(data)
                         else:
                             self.send_error(404)
-                except (ConnectionAbortedError, BrokenPipeError):
+                except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
                     pass
 
             def do_POST(self):
                 try:
                     body = self._read_body()
+                    api_ref._mark_activity()
                     if self.path == "/api/chat":
-                        msg = json.loads(body).get("message", "")
+                        request = json.loads(body)
+                        msg = request.get("message", "")
+                        thinking_level = request.get("thinking_level", "none")
                         api_ref.pet_state = "work"
-                        api_ref._last_activity = time.time()
-                        api_ref._sleep_timer_started = False
+                        api_ref._mark_activity()
+
+                        service = api_ref.service
+
+                        # 单飞：本地 UI 和手机共用一把锁
+                        token = service.controller.acquire("local")
+                        if token is None:
+                            owner = service.controller.owner or "未知"
+                            api_ref.pet_state = "work"
+                            self._send_json({
+                                "ok": False,
+                                "error": f"正有一轮在跑（{owner}），先停止再发。",
+                                "busy": True,
+                            })
+                            return
+                        api_ref._local_token = token
+
+                        def on_delta(piece, kind):
+                            """真流式：逐片推给前端。"""
+                            api_ref._queue_event("_onChatDelta", {
+                                "text": piece if kind == "content" else "",
+                                "reasoning": piece if kind == "reasoning" else "",
+                                "kind": kind,
+                            })
+
                         def _chat():
                             try:
                                 agent = api_ref._ensure_agent()
+                                agent.config["thinking_level"] = thinking_level
+                                agent.provider.thinking_level = thinking_level
                                 if not agent.conversation_id:
                                     agent.new_conversation()
-                                response = agent.chat(msg)
+                                response = agent.chat(
+                                    msg, on_delta=on_delta, cancel=token
+                                )
                                 api_ref.pet_state = "idle"
-                                api_ref._last_activity = time.time()
                                 api_ref._start_sleep_timer()
-                                api_ref._push_result("_onChatResult", json.dumps({"ok": True, "response": response}, ensure_ascii=False))
+                                payload = response if isinstance(response, dict) else {"response": response}
+                                payload["ok"] = True
+                                api_ref._push_result("_onChatResult", json.dumps(payload, ensure_ascii=False))
+                                api_ref._refresh_balance()
                             except Exception as e:
-                                api_ref.pet_state = "cry"
-                                api_ref._start_sleep_timer()
-                                api_ref._push_result("_onChatResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                                from agent.cancel import CancelledError
+
+                                if isinstance(e, CancelledError):
+                                    api_ref.pet_state = "idle"
+                                    api_ref._start_sleep_timer()
+                                    api_ref._push_result("_onChatResult", json.dumps({
+                                        "ok": True, "cancelled": True,
+                                        "response": "已停止。",
+                                    }, ensure_ascii=False))
+                                else:
+                                    api_ref.pet_state = "cry"
+                                    api_ref._start_sleep_timer()
+                                    api_ref._push_result("_onChatResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+                                    api_ref._refresh_balance()
+                            finally:
+                                service.controller.release()
+                                service.controller.cancel_all_approvals()
+                                api_ref._local_token = None
+
                         threading.Thread(target=_chat, daemon=True).start()
                         self._send_json({"ok": True, "pending": True})
                     elif self.path == "/api/models":
                         def _models():
                             try:
+                                agent = api_ref._ensure_agent()
                                 request = json.loads(body)
                                 provider_id = request.get("provider_id", "custom")
                                 preset = get_provider(provider_id)
@@ -290,7 +739,7 @@ class MollyPawAPI:
                                     auth_mode = "bearer"
                                     supports_temperature = True
                                 provider = OpenAIProvider(
-                                    api_key=request.get("api_key", ""),
+                                    api_key=request.get("api_key", "") or agent.config.get("api_key", ""),
                                     base_url=base_url,
                                     protocol=protocol,
                                     models_path=models_path,
@@ -309,6 +758,9 @@ class MollyPawAPI:
                                 agent = api_ref._ensure_agent()
                                 config = json.loads(body)
                                 agent.save_config(config)
+                                if api_ref.sleep_cycle:
+                                    api_ref.sleep_cycle.provider = agent.provider
+                                    api_ref.sleep_cycle.reload_config()
                                 api_ref._push_result("_onSaveConfigResult", json.dumps({"ok": True}, ensure_ascii=False))
                             except Exception as e:
                                 api_ref._push_result("_onSaveConfigResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
@@ -327,9 +779,36 @@ class MollyPawAPI:
                     elif self.path == "/api/approve_tool":
                         result = api_ref.approve_tool(json.loads(body))
                         self._send_json(json.loads(result))
+                    # -- 远程互联（POST：写操作）
+                    elif self.path == "/api/relay/start":
+                        self._send_json(json.loads(api_ref.relay_start()))
+                    elif self.path == "/api/relay/stop":
+                        self._send_json(json.loads(api_ref.relay_stop()))
+                    elif self.path == "/api/relay/settings":
+                        self._send_json(json.loads(api_ref.relay_settings(body or "{}")))
+                    elif self.path == "/api/relay/pin":
+                        self._send_json(json.loads(api_ref.relay_pin(body or "{}")))
+                    elif self.path == "/api/relay/pin/cancel":
+                        self._send_json(json.loads(api_ref.relay_pin_cancel()))
+                    elif self.path == "/api/relay/device_revoke":
+                        self._send_json(json.loads(api_ref.relay_device_revoke(body)))
+                    elif self.path == "/api/relay/device_revoke_all":
+                        self._send_json(json.loads(api_ref.relay_devices_purge(body or "{}")))
+                    # -- 停止按钮 ------------------------------------------
+                    elif self.path == "/api/stop":
+                        result = api_ref.stop_chat(json.dumps(json.loads(body) if body else {}))
+                        self._send_json(json.loads(result))
                     elif self.path == "/api/approval_mode":
                         result = api_ref.set_approval_mode(json.loads(body))
                         self._send_json(json.loads(result))
+                    elif self.path == "/api/thinking_level":
+                        result = api_ref.set_thinking_level(json.loads(body))
+                        self._send_json(json.loads(result))
+                    elif self.path == "/api/sleep":
+                        result = api_ref.save_sleep_settings(json.loads(body))
+                        self._send_json(json.loads(result))
+                    elif self.path == "/api/activity":
+                        self._send_json({"ok": True})
                     elif self.path == "/api/conversations/new":
                         def _work():
                             try:
@@ -370,16 +849,45 @@ class MollyPawAPI:
                         self._send_json({"ok": True, "pending": True})
                     else:
                         self.send_error(404)
-                except (ConnectionAbortedError, BrokenPipeError):
+                except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
                     pass
 
             def log_message(self, fmt, *a):
                 pass
 
+            def handle_one_request(self):
+                """兜住"客户端提前断开"这一类异常。
+
+                为什么必须在这一层兜：BaseHTTPRequestHandler 的
+                handle_one_request 里发生的异常会一路冒到 socketserver，
+                由它打印一整段 traceback（用户实测看到满屏红字）。
+                在 do_GET/do_POST 里 try 只能挡住一部分 ——
+                写响应头、flush、send_error 都可能在中途炸。
+                这里统一吞掉，语义上也正确：对方不等了，没什么可做的。
+                """
+                try:
+                    return super().handle_one_request()
+                except self.CLIENT_GONE:
+                    self.close_connection = True
+                except OSError as exc:
+                    # 套接字层面的断开（含 Windows 的 WSAECONNRESET）
+                    import errno as _errno
+
+                    if exc.errno in (
+                        _errno.ECONNRESET, _errno.EPIPE, _errno.ECONNABORTED,
+                        getattr(_errno, "WSAECONNRESET", -1),
+                        getattr(_errno, "WSAECONNABORTED", -1),
+                    ):
+                        self.close_connection = True
+                    else:
+                        raise
+
         try:
-            httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 18765), PetHandler)
+            httpd = http.server.ThreadingHTTPServer((host, port), PetHandler)
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
-            print("[MollyPaw] Pet server started on http://127.0.0.1:18765/")
+            actual = httpd.server_address[1]
+            api_ref.server_port = actual
+            print(f"[MollyPaw] Pet server started on http://{host}:{actual}/")
         except Exception as e:
             print("[MollyPaw] Pet server failed: " + str(e))
 
@@ -388,17 +896,16 @@ class MollyPawAPI:
     def send_message(self, message):
         """Send a user message to the agent and get a response."""
         self.pet_state = "work"
-        self._last_activity = time.time()
-        self._sleep_timer_started = False
+        self._mark_activity()
 
         def _do_chat():
             try:
                 agent = self._ensure_agent()
                 response = agent.chat(message)
                 self.pet_state = "idle"
-                self._last_activity = time.time()
                 self._start_sleep_timer()
-                result = json.dumps({"ok": True, "response": response}, ensure_ascii=False)
+                result = json.dumps({"ok": True, **(response if isinstance(response, dict) else {"response": response})}, ensure_ascii=False)
+                self._refresh_balance()
             except Exception as e:
                 self.pet_state = "cry"
                 self._start_sleep_timer()
@@ -416,28 +923,19 @@ class MollyPawAPI:
     def set_pet_state(self, state):
         if state in ("idle", "work", "cry", "sleep"):
             self.pet_state = state
-            self._last_activity = time.time()
+            if state != "sleep":
+                self._mark_activity()
             return json.dumps({"ok": True}, ensure_ascii=False)
         return json.dumps({"ok": False, "error": "Invalid state"}, ensure_ascii=False)
 
     def _start_sleep_timer(self):
-        def _check_sleep():
-            while True:
-                time.sleep(5)
-                elapsed = time.time() - self._last_activity
-                if elapsed >= self._idle_threshold and self.pet_state not in ("work", "sleep"):
-                    self.pet_state = "sleep"
-                    break
-        if not self._sleep_timer_started:
-            self._sleep_timer_started = True
-            t = threading.Thread(target=_check_sleep, daemon=True)
-            t.start()
+        self._mark_activity()
 
     def open_url(self, url_json):
         """Open a URL in the system default browser."""
         import webbrowser
         try:
-            data = json.loads(url_json) if isinstance(url_json, str) else url_json
+            data = _load_json_payload(url_json)
             url = data.get("url", "")
             if url and (url.startswith("http://") or url.startswith("https://")):
                 webbrowser.open(url)
@@ -453,6 +951,11 @@ class MollyPawAPI:
             self._events.append({"name": name, "payload": payload})
 
     def _push_result(self, callback, result):
+        """推一个事件结果。
+
+        这里**不能**用 _load_json_payload：event payload 可以是数组、
+        字符串等任意 JSON 值（比如 skills 返回 list），不一定是 object。
+        """
         try:
             payload = json.loads(result) if isinstance(result, str) else result
         except (TypeError, json.JSONDecodeError):
@@ -464,6 +967,17 @@ class MollyPawAPI:
             events = self._events
             self._events = []
         return {"ok": True, "events": events}
+
+    def _refresh_balance(self):
+        def _work():
+            try:
+                agent = self._ensure_agent()
+                preset = get_provider(agent.config.get("provider_id")) or {}
+                result = agent.provider.get_balance(preset.get("balance_path", agent.config.get("balance_path", "")), preset.get("balance_parser", ""), preset.get("balance_base_url", ""))
+            except Exception as e:
+                result = {"ok": False, "supported": False, "error": str(e)}
+            self._queue_event("_onBalanceResult", result)
+        threading.Thread(target=_work, daemon=True).start()
 
     def get_config(self):
         def _work():
@@ -482,6 +996,9 @@ class MollyPawAPI:
                 agent = self._ensure_agent()
                 config = json.loads(config_json)
                 agent.save_config(config)
+                if self.sleep_cycle:
+                    self.sleep_cycle.provider = agent.provider
+                    self.sleep_cycle.reload_config()
                 self._push_result("_onSaveConfigResult", json.dumps({"ok": True}, ensure_ascii=False))
             except Exception as e:
                 self._push_result("_onSaveConfigResult", json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
@@ -529,8 +1046,26 @@ def create_tray_icon(window):
     icon_image = get_tray_icon_image()
 
     def on_show(icon, item):
-        window.show()
-        window.focus()
+        """托盘点「显示」：把窗口带回来并置前。
+
+        pywebview 的 Window **没有 focus() 方法**（focus 相关的是 bool 属性
+        focused，不能调用）。以前这里写 window.focus()，于是每次点托盘都会
+        抛 TypeError: 'bool' object is not callable。
+
+        注意实际表现：窗口**照样会回来**（window.show() 已经先执行完了），
+        异常被 pystray 自己打印后吞掉 —— 所以用户看到的是"功能正常、日志里
+        多一段 traceback"，很容易被忽略。但日志被污染、restore 也没生效。
+        正确的是 restore()：把窗口从最小化/隐藏状态恢复并激活。
+        """
+        try:
+            window.show()
+        except Exception:
+            pass
+        try:
+            window.restore()
+        except Exception:
+            # 某些后端没有 restore，退回到 show 就够了
+            pass
 
     def on_quit(icon, item):
         global _pet_process
@@ -802,19 +1337,16 @@ def main():
     window = webview.create_window(
         "MollyPaw",
         get_frontend_path(),
-        width=1000,
-        height=700,
-        min_size=(800, 600),
+        width=1280,
+        height=900,
+        min_size=(1100, 800),
         text_select=True,
     )
     # Launch pet as a real subprocess (survives window close)
     threading.Thread(target=start_pet, daemon=True).start()
 
-    # Start sleep timer
-    threading.Thread(
-        target=lambda: (time.sleep(2), api._start_sleep_timer()),
-        daemon=True,
-    ).start()
+    # Initialize the sleep cycle. Mode "off" creates no worker thread.
+    api._ensure_agent()
 
     # --- Tray: non-daemon thread started BEFORE webview ---
     tray_thread = None

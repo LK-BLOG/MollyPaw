@@ -1,9 +1,10 @@
-"""MollyPaw Agent - Tools."""
+﻿"""MollyPaw Agent - Tools."""
 from agent.tools.registry import ToolRegistry
 from agent.tools.file_tool import FileTool
 from agent.tools.exec_tool import ExecTool
 from agent.tools.skill_tool import SkillTool
 from agent.tools.memory_tool import MemoryTool
+from agent.tools.web_tool import WebTool
 
 # Default registry with built-in tools registered.
 default_registry = ToolRegistry()
@@ -19,3 +20,6 @@ default_registry.register(SkillTool())
 
 # Register MemoryTool
 default_registry.register(MemoryTool())
+
+# Register web search and fetch
+default_registry.register(WebTool())

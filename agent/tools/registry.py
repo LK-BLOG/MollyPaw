@@ -52,4 +52,16 @@ class ToolRegistry:
         tool = self._tool_map.get(func_name)
         if not tool:
             return f"Error: unknown tool '{func_name}'"
-        return tool.execute(func_name, arguments)
+        if not isinstance(arguments, dict):
+            return f"Error: invalid arguments for '{func_name}': expected an object"
+        schema = next((item for item in self._schemas if item.get("function", {}).get("name") == func_name), {})
+        required = schema.get("function", {}).get("parameters", {}).get("required", [])
+        missing = [name for name in required if name not in arguments]
+        if missing:
+            return f"Error: missing required argument(s) for '{func_name}': {', '.join(missing)}"
+        try:
+            return tool.execute(func_name, arguments)
+        except TypeError as exc:
+            return f"Error: invalid arguments for '{func_name}': {exc}"
+        except Exception as exc:
+            return f"Error executing '{func_name}': {exc}"

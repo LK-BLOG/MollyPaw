@@ -7,12 +7,20 @@ pywebview>=5.0
 # HTTP requests (for LLM API calls)
 requests>=2.31.0
 
-# Async support
-aiohttp>=3.9.0
 
 # System tray support
 pystray>=0.19.0
 Pillow>=10.0.0
 
+# 远程互联（可选功能：缺了主程序照常启动，只是设置里的"远程互联"会被禁用）
+#   cryptography     —— X25519 / HKDF / AES-256-GCM / PBKDF2
+#   websocket-client —— PC 端连中继（同步客户端，贴合现有线程模型）
+cryptography>=42.0.0
+websocket-client>=1.7.0
+
 # Packaging
 pyinstaller>=6.0.0
+
+# --- 开发依赖（不写进上面的运行时列表，避免打包时被拖进去）-------------------
+# pytest      : 跑 tests/
+# websockets  : 只有 tests/test_relay_contract.py 用，用来起本地中继

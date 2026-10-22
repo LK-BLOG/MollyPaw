@@ -1,4 +1,4 @@
-﻿/* MollyPaw - Warm Brown & White Theme */
+/* MollyPaw - Warm Brown & White Theme */
 
 :root {
   --deep-brown: #6B4226;
@@ -313,9 +313,14 @@ body {
 #user-input::placeholder { color: var(--tan); }
 
 .send-btn {
-  width: 36px; height: 36px;
+  width: auto;
+  min-width: 58px;
+  height: 36px;
+  padding: 0 14px;
   border: none;
-  border-radius: 8px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
   background: var(--paw-orange);
   color: var(--pure-white);
   cursor: pointer;
@@ -328,6 +333,29 @@ body {
 .send-btn:disabled { opacity: 0.35; cursor: default; }
 .send-btn:not(:disabled):hover { opacity: 0.9; }
 .send-btn:not(:disabled):active { transform: scale(0.93); }
+
+/* 停止按钮：只在 agent 跑着的时候出现 */
+.stop-btn {
+  height: 36px;
+  padding: 0 14px;
+  margin-right: 8px;
+  border: 1.5px solid var(--deep-brown);
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  background: transparent;
+  color: var(--deep-brown);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+}
+.stop-btn:hover:not(:disabled) { background: rgba(107, 66, 38, 0.08); }
+.stop-btn:active:not(:disabled) { transform: scale(0.95); }
+.stop-btn:disabled { opacity: 0.5; cursor: default; }
 
 .input-hint {
   text-align: center;
@@ -351,8 +379,10 @@ body {
 .modal {
   background: var(--pure-white);
   border-radius: 12px;
-  width: 420px;
-  max-width: 90vw;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 12px 40px rgba(58,42,26,0.18);
 }
 
@@ -368,7 +398,16 @@ body {
   color: var(--deep-brown);
 }
 
-.modal-body { padding: 20px; }
+.modal-body {
+  padding: 20px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.modal-body::-webkit-scrollbar { width: 8px; }
+.modal-body::-webkit-scrollbar-track { background: var(--cream); border-radius: 8px; }
+.modal-body::-webkit-scrollbar-thumb { background: var(--tan); border-radius: 8px; }
+.modal-body::-webkit-scrollbar-thumb:hover { background: var(--light-brown); }
 
 .form-group {
   margin-bottom: 16px;
@@ -380,7 +419,10 @@ body {
   color: var(--mid-brown);
   margin-bottom: 6px;
 }
-.form-group input {
+.form-group input[type="text"],
+.form-group input[type="password"],
+.form-group input[type="number"],
+.form-group input:not([type]) {
   width: 100%;
   padding: 9px 12px;
   border: 1.5px solid var(--tan);
@@ -391,12 +433,33 @@ body {
   outline: none;
   transition: border-color 0.15s;
 }
-.form-group input:focus { border-color: var(--paw-orange); }
+.form-group input[type="text"]:focus,
+.form-group input[type="password"]:focus,
+.form-group input[type="number"]:focus,
+.form-group input:not([type]):focus { border-color: var(--paw-orange); }
+
+/* 单选 / 复选按钮不能吃到上面那条"文本框"样式。
+   早先 .form-group input 是通配的，把 radio 也设成 width:100% +
+   内边距 + 边框，结果收音机跑到整行最右边、还带着输入框外观 ——
+   看起来就是"选择按钮偏了一头大象"。 */
+.form-group input[type="radio"],
+.form-group input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--paw-orange);
+}
 
 .form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   gap: 10px;
   margin-top: 20px;
+  padding-top: 12px;
+  background: var(--pure-white);
 }
 
 .btn-primary {
@@ -838,3 +901,651 @@ body {
 .model-row select { flex: 1; min-width: 0; }
 .model-row button { flex: 0 0 auto; width: auto; padding: 9px 12px; }
 .manual-model { margin-top: 8px; }
+.context-row input { flex: 1; min-width: 0; }
+.context-row select { flex: 0 0 112px; }
+
+.composer {
+  padding: 8px 12px 7px;
+  border: 1.5px solid var(--tan);
+  border-radius: 20px;
+  background: var(--pure-white);
+  box-shadow: 0 8px 24px rgba(58, 42, 26, 0.06);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer:focus-within {
+  border-color: var(--paw-orange);
+  box-shadow: 0 8px 24px rgba(212, 130, 58, 0.10);
+}
+.composer .input-wrapper {
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.composer .input-wrapper:focus-within { border-color: transparent; }
+
+.input-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 2px 2px;
+  color: var(--light-brown);
+  font-size: 12px;
+}
+.status-left, .status-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.status-btn {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--deep-brown);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.status-btn:hover { color: var(--paw-orange); }
+.approval-trigger { display: inline-flex; align-items: center; gap: 6px; color: var(--dark-brown); }
+.approval-trigger-icon { display: none; }
+.approval-trigger-icon.active { display: block; }
+.approval-trigger svg { display: block; width: 16px; height: 16px; }
+.approval-option-icon svg, .approval-option-check svg { display: block; width: 20px; height: 20px; }
+.model-menu-btn {
+  max-width: 260px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--warm-gray);
+  color: var(--mid-brown);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-menu-btn:hover { background: #F1DFCA; color: var(--deep-brown); }
+
+.approval-anchor { position: relative; }
+.approval-menu {
+  position: absolute;
+  left: 0;
+  bottom: 34px;
+  width: min(430px, calc(100vw - 80px));
+  padding: 13px;
+  border: 1px solid var(--tan);
+  border-radius: 24px;
+  background: var(--pure-white);
+  box-shadow: 0 14px 36px rgba(58, 42, 26, 0.20);
+  z-index: 30;
+}
+.approval-menu[hidden] { display: none; }
+.approval-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 8px 10px;
+}
+.approval-menu-title { color: var(--mid-brown); font-size: 14px; }
+.approval-menu-learn {
+  color: var(--light-brown);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.approval-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 9px;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--deep-brown);
+  text-align: left;
+  cursor: pointer;
+}
+.approval-option:hover { background: var(--cream); }
+.approval-option.active { background: #FBE8D4; color: var(--paw-orange); }
+.approval-option-check {
+  display: none;
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--paw-orange);
+}
+.approval-option.active .approval-option-check { display: block; }
+.approval-option-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--mid-brown);
+}
+.approval-option.active .approval-option-icon { color: var(--paw-orange); }
+.approval-option-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.approval-option-copy strong { font-size: 14px; font-weight: 600; }
+.approval-option-copy small { color: var(--light-brown); font-size: 12px; line-height: 1.35; }
+.approval-option.active .approval-option-copy small { color: #B56B32; }
+
+.thinking-menu {
+  position: fixed;
+  right: 48px;
+  bottom: 78px;
+  width: 300px;
+  padding: 18px 18px 15px;
+  border: 1px solid var(--tan);
+  border-radius: 26px;
+  background: var(--pure-white);
+  box-shadow: 0 14px 36px rgba(58, 42, 26, 0.20);
+  z-index: 999;
+}
+.thinking-menu[hidden] { display: none; }
+.thinking-current {
+  color: var(--paw-orange);
+  font-size: 19px;
+  font-weight: 700;
+  text-align: center;
+}
+.thinking-model {
+  margin-top: 3px;
+  color: var(--light-brown);
+  font-size: 14px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thinking-slider-wrap {
+  position: relative;
+  margin: 12px 2px 0;
+  height: 32px;
+  padding: 2px 6px;
+}
+.thinking-slider-track {
+  position: absolute;
+  z-index: 4;
+  inset: 4px 6px;
+  border-radius: 12px;
+  overflow: visible;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      90deg,
+      #2E9EFF 0,
+      #68C4FF var(--slider-progress, 0%),
+      transparent var(--slider-progress, 0%),
+      transparent 100%
+    ),
+    color-mix(in srgb, var(--deep-brown) 10%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--deep-brown) 24%, transparent);
+  transition: background 0.28s ease, box-shadow 0.35s ease;
+}
+.thinking-slider-track::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  clip-path: inset(0 round 12px);
+  background: linear-gradient(120deg, #1d1830, #3f285f 48%, #7446a2);
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+.thinking-slider-track::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: 12px;
+  clip-path: inset(0 round 12px);
+  opacity: 0;
+  background-image:
+    radial-gradient(circle, rgba(146,202,255,0.58) 0 1.2px, transparent 2.8px),
+    radial-gradient(circle, rgba(201,166,255,0.52) 0 1.1px, transparent 2.7px),
+    radial-gradient(circle, rgba(255,255,255,0.34) 0 0.8px, transparent 2.2px);
+  background-size: 67px 67px, 103px 103px, 139px 139px;
+  background-position: 0 0, 23px 17px, 51px 9px;
+  filter: blur(0.7px);
+  transition: opacity 0.45s ease;
+}
+.thinking-slider-wrap.is-max .thinking-slider-track::after { opacity: 1; }
+.thinking-slider-wrap.is-max .thinking-slider-track::before {
+  opacity: 1;
+  animation: starDrift 10s linear infinite;
+}
+.thinking-slider {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+.thinking-slider::-webkit-slider-runnable-track {
+  height: 24px;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+}
+.thinking-slider::-webkit-slider-thumb {
+  width: 30px;
+  height: 30px;
+  margin-top: -3px;
+  border: 0;
+  border-radius: 50%;
+  appearance: none;
+  opacity: 0;
+  background: transparent;
+}
+.thinking-slider::-moz-range-track {
+  height: 24px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+}
+.thinking-slider::-moz-range-thumb {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  opacity: 0;
+  background: transparent;
+}
+.thinking-thumb {
+  position: absolute;
+  z-index: 8;
+  top: 50%;
+  left: 15px;
+  width: 30px;
+  height: 30px;
+  border: 0.5px solid color-mix(in srgb, var(--deep-brown) 34%, transparent);
+  border-radius: 50%;
+  background: var(--pure-white);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.10);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition:
+    left 0.30s cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 0.35s ease,
+    border-color 0.35s ease;
+}
+.thinking-slider-wrap.is-max .thinking-thumb {
+  border-color: rgba(255,255,255,0.72);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.30), 0 0 16px rgba(190,139,255,0.72);
+}
+.thinking-dots {
+  position: absolute;
+  z-index: 9;
+  top: 14px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.thinking-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--deep-brown) 28%, transparent);
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+.thinking-dots span.active {
+  background: #FFFFFF;
+  box-shadow: none;
+}
+.thinking-slider-wrap.is-max .thinking-dots span { background: rgba(255,255,255,0.62); }
+.thinking-slider-wrap.is-max .thinking-dots span.active { background: #FFFFFF; }
+@keyframes starDrift {
+  from { background-position: 0 0, 12px 8px; }
+  to { background-position: 28px 0, -31px 8px; }
+}
+.msg-cost {
+  margin-top: 7px;
+  color: var(--light-brown);
+  font-size: 11px;
+}
+.sleep-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--warm-gray);
+}
+.sleep-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: var(--deep-brown);
+  font-weight: 700;
+}
+.sleep-status { font-size: 11px; font-weight: 400; }
+.sleep-status.ok { color: var(--paw-orange); }
+.sleep-status.err { color: #A33; }
+.sleep-task-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--deep-brown);
+  font-size: 13px;
+}
+.sleep-task-group.disabled { opacity: 0.42; }
+.sleep-task-group label { display: inline-flex; align-items: center; gap: 5px; }
+.sleep-task-group input { accent-color: var(--paw-orange); }
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--warm-gray);
+}
+.settings-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--light-brown);
+  padding: 8px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+.settings-tab:hover { color: var(--deep-brown); }
+.settings-tab.active {
+  color: var(--paw-orange);
+  border-bottom-color: var(--paw-orange);
+  font-weight: 700;
+}
+.settings-tab-panel { display: none; }
+.settings-tab-panel.active { display: block; }
+
+/* ============================================================
+   远程互联面板
+   ============================================================ */
+.relay-section { display: flex; flex-direction: column; gap: 16px; }
+.relay-intro { font-size: 13px; color: var(--mid-brown); margin: 0; line-height: 1.6; }
+.relay-intro code {
+  background: var(--cream);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------
+   按钮布局修复（重要）
+   全局 .btn-secondary 是给底部"保存/取消"那一行设计的：flex:1 + padding:9px 0，
+   两个按钮对半分。把它用到面板里就会出事：
+     - 开关按钮被撑满整行（411px）
+     - "添加设备"被挤到 54px，文字都放不下（用户原话：撑爆了）
+   所以在这个面板内把按钮还原成"按内容宽度 + 正常水平内边距"。
+   ------------------------------------------------------------------ */
+.relay-section .btn-secondary {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 9px 16px;
+  white-space: nowrap;
+}
+.relay-section .link-btn {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  padding: 6px 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--paw-orange);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.relay-section .link-btn:hover { color: var(--deep-brown); }
+.relay-section .link-btn.danger { color: #a94442; }
+
+/* 小屏：按钮组换行，别横向溢出 */
+.relay-section .relay-status-row,
+.relay-section .relay-psk-actions,
+.relay-section .relay-pair-head,
+.relay-section .relay-pair-actions {
+  flex-wrap: wrap;
+}
+
+.relay-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--cream);
+  border-radius: 10px;
+}
+.relay-state {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(107, 66, 38, 0.1);
+  color: var(--deep-brown);
+}
+.relay-state.connected { background: rgba(76, 140, 84, 0.16); color: #3d6f44; }
+.relay-state.error { background: rgba(169, 68, 66, 0.14); color: #a94442; }
+.relay-state.reconnecting,
+.relay-state.starting { background: rgba(212, 130, 58, 0.16); color: #a8622a; }
+.relay-room {
+  font-size: 12px;
+  color: var(--mid-brown);
+  font-family: ui-monospace, Consolas, monospace;
+  margin-right: auto;
+}
+.relay-hint { display: block; font-size: 12px; color: var(--mid-brown); margin-top: 5px; min-height: 16px; }
+.relay-hint.bad { color: #a94442; }
+.relay-hint.ok { color: #3d6f44; }
+
+/* 密钥一行：输入框 + 复制按钮 */
+.relay-psk-row { display: flex; gap: 8px; align-items: center; }
+.relay-psk-row input { flex: 1 1 auto; min-width: 0; font-family: ui-monospace, Consolas, monospace; }
+.relay-psk-row .btn-secondary { flex: 0 0 auto; padding: 9px 14px; }
+
+.relay-psk-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+
+.relay-pair-block {
+  border: 1px solid var(--light-brown);
+  border-radius: 10px;
+  padding: 14px;
+}
+.relay-pair-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.relay-pair-head strong { font-size: 13.5px; }
+.relay-pair-actions { display: flex; gap: 12px; align-items: center; }
+
+.relay-pair-box {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--light-brown);
+  text-align: center;
+}
+.relay-pin {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--deep-brown);
+  line-height: 1.2;
+  user-select: all;
+}
+.relay-pin-hint { font-size: 12.5px; color: var(--mid-brown); margin: 8px 0 10px; }
+.relay-pin-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  font-size: 12.5px;
+  color: var(--mid-brown);
+}
+
+/* ---- 中继服务器单选（官方 / 自建）------------------------------------
+   这些元素以前一条 CSS 都没有，结果 radio 跑到右边、文字换行，
+   整块看起来是歪的。新增 UI 必须配 CSS —— 不写就一定歪。
+   ---- */
+.relay-server-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+.relay-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--light-brown);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.relay-radio:hover { background: var(--cream); }
+.relay-radio input[type="radio"] {
+  flex: 0 0 auto;
+  margin: 3px 0 0;
+  accent-color: var(--paw-orange);
+}
+.relay-radio > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.relay-radio strong { font-size: 13.5px; font-weight: 600; }
+.relay-radio small { font-size: 12px; color: var(--mid-brown); line-height: 1.5; }
+.relay-radio input:checked + span strong { color: var(--paw-orange); }
+
+.relay-url-group { margin-top: 10px; }
+.relay-url-group input { width: 100%; }
+
+/* ---- 密钥遮罩 --------------------------------------------------------
+   输入框是 type=text（为了能看见、能复制），
+   遮罩靠 CSS 做，兼顾"看得见"和"别被旁边人瞄到"。
+   ---- */
+#relay-psk.masked {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+/* ---- 二维码 ---------------------------------------------------------- */
+.relay-qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: var(--pure-white);
+  border-radius: 12px;
+  margin-bottom: 4px;
+}
+.relay-qr {
+  width: 200px;
+  height: 200px;
+  /* 二维码放大必须用最近邻，模糊了手机扫不出来 */
+  image-rendering: pixelated;
+}
+
+.relay-code-manual {
+  text-align: left;
+  margin: 10px 0;
+  border: 1px dashed var(--light-brown);
+  border-radius: 9px;
+  padding: 8px 12px;
+}
+.relay-code-manual summary {
+  font-size: 12.5px;
+  color: var(--mid-brown);
+  cursor: pointer;
+}
+.relay-code-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.relay-code-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+}
+.relay-code-row .btn-secondary { flex: 0 0 auto; padding: 9px 14px; }
+
+.relay-warn {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: rgba(212, 130, 58, 0.1);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8a5423;
+  text-align: left;
+}
+
+/* ---- 设备清退 -------------------------------------------------------- */
+.relay-device-bulk {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.relay-device-bulk small {
+  flex: 1 1 200px;
+  font-size: 11.5px;
+  color: var(--mid-brown);
+  line-height: 1.5;
+}
+
+.relay-devices-block { display: flex; flex-direction: column; gap: 8px; }
+.relay-devices-block > strong { font-size: 13.5px; }
+.relay-device-list { display: flex; flex-direction: column; gap: 8px; }
+.relay-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--light-brown);
+  border-radius: 9px;
+}
+.relay-device.revoked { opacity: 0.55; }
+.relay-device-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.relay-device-main strong { font-size: 13px; }
+.relay-device-main small { font-size: 11.5px; color: var(--mid-brown); }
+.relay-device-actions { display: flex; gap: 10px; flex-shrink: 0; }
+.relay-empty { font-size: 12.5px; color: var(--mid-brown); padding: 6px 0; }
+
+.relay-audit {
+  border: 1px solid var(--light-brown);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.relay-audit summary { font-size: 13px; cursor: pointer; }
+.relay-audit-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 10px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+}
+.relay-audit-line {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--cream);
+  word-break: break-all;
+}
+
+.link-btn.danger { color: #a94442; }
+
+
+/* 表单字段下方的说明文字 */
+.field-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--mid-brown);
+}
