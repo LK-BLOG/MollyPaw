@@ -177,8 +177,10 @@ def test_kill_process_tree_no_pid():
 def test_kill_process_tree_kills_real_process():
     import subprocess
 
+    # 睡 30 秒太长 —— CI 上被 SIGTERM 打断就会挂住整轮测试。
+    # 5 秒足够验证"杀掉了"，又不会拖慢。
     proc = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)"],
+        [sys.executable, "-c", "import time; time.sleep(5)"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -199,9 +201,9 @@ def test_kill_process_tree_kills_children():
     # 父进程再起一个睡眠子进程
     script = (
         "import subprocess,sys,time;"
-        "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']);"
+        "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(5)']);"
         "print(p.pid,flush=True);"
-        "time.sleep(30)"
+        "time.sleep(5)"
     )
     proc = subprocess.Popen(
         [sys.executable, "-c", script],
@@ -210,7 +212,9 @@ def test_kill_process_tree_kills_children():
         text=True,
     )
     try:
-        child_pid = int(proc.stdout.readline().strip())
+        line = proc.stdout.readline()
+        assert line, "子进程没报出 pid"
+        child_pid = int(line.strip())
         assert kill_process_tree(proc.pid) is True
         proc.wait(timeout=5)
         time.sleep(0.6)
@@ -219,6 +223,30 @@ def test_kill_process_tree_kills_children():
     finally:
         if proc.poll() is None:
             proc.kill()
+        # 孙子进程可能还活着（如果 taskkill 失败），顺手清掉，
+        # 别让它在 CI 机器上挂 5 秒
+        try:
+            _kill_pid(child_pid)
+        except Exception:
+            pass
+
+
+def _kill_pid(pid):
+    """尽力杀掉一个 pid（测试清理用）。"""
+    import subprocess
+    import signal
+
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            capture_output=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def _pid_alive(pid):

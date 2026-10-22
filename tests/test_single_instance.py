@@ -100,14 +100,16 @@ def test_stale_lock_from_dead_pid_is_recovered(tmp_path, lockname):
 def test_second_live_instance_is_blocked(tmp_path, lockname):
     """核心断言：持锁进程还活着时，第二个实例必须退让。
 
-    用探针改成"拿到锁就睡 8 秒"，这样窗口足够长，能可靠观察。
+    用探针改成"拿到锁就睡 4 秒"，这样窗口足够长，能可靠观察。
+
+    （原本是 8 秒，CI 上被 SIGTERM 打断时会拖住整轮测试。）
     """
     holder_src = LOCK_SOURCE.replace(
         'print("ACQUIRED" if _check_single_instance() else "BLOCKED")',
         'ok = _check_single_instance()\n'
         '    print("ACQUIRED" if ok else "BLOCKED", flush=True)\n'
         '    import time as _t\n'
-        '    _t.sleep(8)'
+        '    _t.sleep(4)'
     )
     holder = tmp_path / "holder.py"
     holder.write_text(holder_src.format(lock_name=lockname), encoding="utf-8")
@@ -138,7 +140,7 @@ def test_lock_released_after_holder_dies(tmp_path, lockname):
         'ok = _check_single_instance()\n'
         '    print("ACQUIRED" if ok else "BLOCKED", flush=True)\n'
         '    import time as _t\n'
-        '    _t.sleep(30)'
+        '    _t.sleep(4)'
     )
     holder = tmp_path / "holder2.py"
     holder.write_text(holder_src.format(lock_name=lockname), encoding="utf-8")

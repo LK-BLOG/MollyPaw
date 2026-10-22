@@ -16,6 +16,7 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -41,7 +42,9 @@ jobs:
           python -m pip install pytest websockets
       - name: Tests
         working-directory: MollyPaw
-        run: python -m pytest -q
+        # 排除联网测试（要访问 api.qrserver.com 拿标准 QR 比对，
+        # runner 到那个站不一定通，不通不该让发版流程红）
+        run: python -m pytest -q -m "not network"
 
   package:
     needs: test
