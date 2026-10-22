@@ -15,11 +15,23 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: MollyPaw
+
+      # 中继仓库也要 checkout ——
+      # 主仓库的 relay 相关测试要用它的 relay/dev_server.py（本地中继）。
+      # 只 checkout 主仓库的话，CI 会报 ModuleNotFoundError: No module named 'relay'。
+      - uses: actions/checkout@v4
+        with:
+          repository: LK-BLOG/MollyPaw-Relay
+          path: MollyPaw-Relay
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install
+        working-directory: MollyPaw
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
@@ -27,15 +39,18 @@ jobs:
           python -m pip install pytest websockets
 
       - name: Tests
+        working-directory: MollyPaw
         run: python -m pytest -q
 
       # 回归防线：远程互联的加密层必须和 Python 端字节级一致。
       # 这个脚本会联网取标准实现的输出做比对，CI 里允许（不花用户流量）。
       - name: Cross-implementation vectors
+        working-directory: MollyPaw
         run: python tools/gen_cross_vectors.py
 
       # 端到端冒烟：中继 + PC 端 + 模拟手机，走真实 WS 与真实加密
       - name: Relay end-to-end smoke
+        working-directory: MollyPaw
         run: |
           python -m pytest tests/test_relay_e2e.py tests/test_phone_cli.py -q
 
@@ -45,18 +60,22 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: MollyPaw
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install
+        working-directory: MollyPaw
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Build (PyInstaller)
+        working-directory: MollyPaw
         run: .\build.bat
       - name: Upload exe
         uses: actions/upload-artifact@v4
         with:
           name: MollyPaw-windows
-          path: dist/MollyPaw.exe
+          path: MollyPaw/dist/MollyPaw.exe
           if-no-files-found: error

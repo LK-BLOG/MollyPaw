@@ -1,6 +1,6 @@
 name: build-and-release
 
-# 打 tag 自动发版：v0.0.0.1.6 -> 跑测试 -> 打包 -> 建 GitHub Release
+# 打 tag 自动发版：beta-0.0.0.2.0 -> 跑测试 -> 打包 -> 建 GitHub Release
 #
 # 版本号唯一真源是 tag。CI 里也跑一次，方便 PR 阶段就发现构建坏了。
 on:
@@ -23,15 +23,24 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: MollyPaw
+      # 中继仓库也要 —— 主仓库的 relay 测试要用它的 relay/dev_server.py
+      - uses: actions/checkout@v4
+        with:
+          repository: LK-BLOG/MollyPaw-Relay
+          path: MollyPaw-Relay
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
+        working-directory: MollyPaw
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pytest websockets
       - name: Tests
+        working-directory: MollyPaw
         run: python -m pytest -q
 
   package:
@@ -39,32 +48,39 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: MollyPaw
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install
+        working-directory: MollyPaw
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Build
+        working-directory: MollyPaw
         run: .\build.bat
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: MollyPaw-windows
-          path: dist/MollyPaw.exe
+          path: MollyPaw/dist/MollyPaw.exe
           if-no-files-found: error
 
   release:
     needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: MollyPaw
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Prepare release notes
+        working-directory: MollyPaw
         run: python tools/release_notes.py "${GITHUB_REF_NAME}" > release-notes.md
       - uses: actions/download-artifact@v4
         with:
@@ -75,6 +91,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            --title "MollyPaw ${GITHUB_REF_NAME#v}" \
+            --title "MollyPaw ${GITHUB_REF_NAME#beta-}" \
             --notes-file release-notes.md \
             dist/MollyPaw.exe || echo "Release 已存在，跳过"
