@@ -31,6 +31,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Linux 上没有 X display，pywebview 建窗口会报
+      #   Xlib.error.DisplayNameError: Bad display name
+      # 用 xvfb 虚拟屏解决（pywebview 的测试要真的开窗口）。
+      - name: Install xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+
       - name: Install
         working-directory: MollyPaw
         run: |
@@ -44,6 +53,9 @@ jobs:
         # 排除联网测试：它要访问 api.qrserver.com 拿标准 QR 做比对，
         # CI runner 到那个站不一定通 —— 通了是加分，不通不该让整轮红。
         run: python -m pytest -q -m "not network"
+        env:
+          # pywebview 在无头环境要靠这个
+          DISPLAY: ":99"
 
       # 回归防线：远程互联的加密层必须和 Python 端字节级一致。
       # 这个脚本会联网取标准实现的输出做比对，CI 里允许（不花用户流量）。

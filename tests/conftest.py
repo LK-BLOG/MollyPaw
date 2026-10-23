@@ -77,3 +77,32 @@ def pytest_configure(config):
     assert real != appdata, (
         f"测试的数据目录指向了 %APPDATA%/MollyPaw（{real}）—— 会覆盖用户数据，拒绝开跑"
     )
+
+
+@pytest.fixture(scope="session")
+def main_module():
+    """import main，但把 webview 换成假的。
+
+    main 会 import webview，而 pywebview 在 Linux 上 **import 时**就探测
+    X display，没有 display 就抛：
+        Xlib.error.DisplayNameError: Bad display name
+    CI 的 Ubuntu runner 就是这样挂的（setup 阶段就炸）。
+
+    这些测试要验的是 HTTP 接口与业务逻辑，跟真窗口没关系，
+    所以换掉 webview 即可（不引额外依赖，也不需要 xvfb）。
+    """
+    import sys
+    import types
+
+    fake = types.ModuleType("webview")
+    fake.Window = object
+    fake.start = lambda *a, **kw: None
+    fake.create_window = lambda *a, **kw: None
+    real = sys.modules.get("webview")
+    sys.modules["webview"] = fake
+    try:
+        import main as _main
+        yield _main
+    finally:
+        if real is not None:
+            sys.modules["webview"] = real

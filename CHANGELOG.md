@@ -24,6 +24,11 @@
   与标准实现逐模块比对验证过。
 - **命令行模拟手机**（`tools/mp_phone.py`）：不用真机就能验证整条链路。
 - 审批不再 120 秒超时 —— 锁屏 10 分钟回来还能点。
+- **中继地址可选「官方 / 自建」**：填官方地址就一键填好，自建就手输 URL。
+- **远程互联面板的密钥框改成明文可见 + 复制按钮**：
+  浏览器不给 `type=password` 的自动填充/"显示密码"按钮，
+  而且随机生成的密钥用户根本看不见，随机按钮等于白给。
+- **CHANGELOG.md**：从这版开始，每个版本都记变更。
 
 ### 修复
 
@@ -46,6 +51,12 @@
 - **客户端断开时控制台刷 traceback**：`ConnectionResetError` 未被捕获。
 - **测试会覆盖用户配置**：测试现在强制把数据目录隔离到临时目录，
   并在启动时断言"绝不能指向项目 data/ 或 %APPDATA%"。
+- **Linux CI 全挂**：无 X display 时 pywebview import 直接抛
+  `Xlib.error.DisplayNameError`，整个测试收集就崩。测试里换成假 webview 模块，
+  CI 补上 xvfb + `DISPLAY=:99`。
+- **CI 被 SIGTERM 打死（exit 143）**：`kill_process_tree` 在 POSIX 下用
+  `killpg(os.getpgid(pid))` 会把父进程一起带走。现在先比进程组，
+  相同就只杀单个进程，SIGTERM 不死再 SIGKILL。
 
 ### 移除
 
@@ -56,3 +67,4 @@
   改为一键配对码（32 字节随机种子派生），本身就是高熵，不需要拉高迭代成本。
 
 [0.0.0.2.0]: https://github.com/LK-BLOG/MollyPaw/compare/beta-0.0.0.1.5...beta-0.0.0.2.0
+（本文件从 0.0.0.2.0 开始记录，之前的历史没有补）

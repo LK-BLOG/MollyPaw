@@ -21,9 +21,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 @pytest.fixture(scope="module")
-def api():
-    """起一个真的 HTTP 服务（随机端口）+ 真的 MollyPawAPI。"""
-    import main
+def api(main_module):
+    """起一个真的 HTTP 服务（随机端口）+ 真的 MollyPawAPI。
+
+    main_module 这个 fixture 负责把 webview 换成假的 ——
+    pywebview 在 Linux 上 import 时就探测 X display，
+    没有 display 会报 Xlib.error.DisplayNameError（CI 的 Ubuntu 就是这样挂的）。
+    """
+    main = main_module
 
     instance = main.MollyPawAPI()
     instance.start_pet_server(host="127.0.0.1", port=0)

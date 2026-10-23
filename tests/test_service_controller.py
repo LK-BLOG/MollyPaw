@@ -177,11 +177,14 @@ def test_approval_rejected():
 # --------------------------------------------------------------------------
 
 
-def test_main_api_creates_service_with_controller():
-    """MollyPawAPI 造出来的 service 必须带着可用的 controller。"""
-    import main
+def test_main_api_creates_service_with_controller(main_module):
+    """MollyPawAPI 造出来的 service 必须带着可用的 controller。
 
-    api = main.MollyPawAPI()
+    main_module fixture 把 webview 换成假的 ——
+    pywebview 在 Linux 上 import 时就探测 X display，
+    没有 display 会报 Xlib.error.DisplayNameError（CI 的 Ubuntu 就是这么挂的）。
+    """
+    api = main_module.MollyPawAPI()
     assert api.service.controller is not None
     # 能真的拿到锁 —— 这正是当初崩的那一行
     token = api.service.controller.acquire("local")
@@ -189,12 +192,11 @@ def test_main_api_creates_service_with_controller():
     api.service.controller.release()
 
 
-def test_main_stop_endpoint_does_not_crash():
+def test_main_stop_endpoint_does_not_crash(main_module):
     """没在跑的时候点停止也应正常返回，而不是抛异常。"""
-    import main
     import json
 
-    api = main.MollyPawAPI()
+    api = main_module.MollyPawAPI()
     res = json.loads(api.stop_chat("{}"))
     assert res["ok"] is True
     assert res["stopped"] is False
