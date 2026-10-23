@@ -38,6 +38,10 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print("用法: python tools/release_notes.py vX.Y.Z", file=sys.stderr)
         return 2
+    # Windows 控制台默认 GBK，中文和符号会炸 —— 强制 UTF-8 输出。
+    # CI 里重定向到文件时同样受益（否则可能写成乱码）。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     print(notes(normalize_tag(argv[1])))
     return 0
 
