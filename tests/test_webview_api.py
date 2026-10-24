@@ -25,6 +25,23 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN_PY = os.path.join(ROOT, "main.py")
 
 
+def _real_webview():
+    """拿到**真的** pywebview 模块。
+
+    conftest 的 main_module fixture 会把 sys.modules["webview"] 换成假模块，
+    假模块的 Window 就是个 object —— 直接 `import webview` 会拿到它，
+    于是本文件所有"方法是否存在"的断言全部误报。这里强制取真模块。
+    """
+    import importlib
+
+    import webview
+
+    if getattr(webview, "__file__", None) is None:
+        sys.modules.pop("webview", None)
+        webview = importlib.import_module("webview")
+    return webview
+
+
 @pytest.fixture(scope="module")
 def main_tree():
     with open(MAIN_PY, "r", encoding="utf-8") as f:
@@ -62,7 +79,7 @@ def test_window_calls_were_found(main_tree):
 
 def test_called_window_methods_exist(main_tree):
     """main.py 里 window.<name>(...) 的方法必须真实存在于 pywebview。"""
-    import webview
+    webview = _real_webview()
 
     called = _window_calls(main_tree)
     missing = []
@@ -111,6 +128,6 @@ def test_tray_show_uses_restore(window_tree=None):
 
 def test_window_destroy_is_valid():
     """退出路径用的 destroy 必须存在（否则只能 os._exit）。"""
-    import webview
+    webview = _real_webview()
 
     assert callable(getattr(webview.Window, "destroy", None))

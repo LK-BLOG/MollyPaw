@@ -1,5 +1,9 @@
 # MollyPaw Dependencies
 # Python >= 3.9
+#
+# NOTE: keep this file pure ASCII. pip reads requirement files using the
+# system locale on Windows (GBK on zh-CN), so UTF-8 non-ASCII comments make
+# `pip install -r requirements.txt` crash with UnicodeDecodeError.
 
 # GUI Framework
 pywebview>=5.0
@@ -12,15 +16,18 @@ requests>=2.31.0
 pystray>=0.19.0
 Pillow>=10.0.0
 
-# 远程互联（可选功能：缺了主程序照常启动，只是设置里的"远程互联"会被禁用）
-#   cryptography     —— X25519 / HKDF / AES-256-GCM / PBKDF2
-#   websocket-client —— PC 端连中继（同步客户端，贴合现有线程模型）
+# Remote link (optional: missing modules only disable the "remote link" panel,
+# the app still starts normally)
+#   cryptography     -- X25519 / HKDF / AES-256-GCM / PBKDF2
+#   websocket-client -- PC side connects to relay (sync client, matches the
+#                       existing thread model)
 cryptography>=42.0.0
 websocket-client>=1.7.0
 
 # Packaging
 pyinstaller>=6.0.0
 
-# --- 开发依赖（不写进上面的运行时列表，避免打包时被拖进去）-------------------
-# pytest      : 跑 tests/
-# websockets  : 只有 tests/test_relay_contract.py 用，用来起本地中继
+# --- dev dependencies (not runtime; kept out of the lists above so that
+#     PyInstaller does not pull them in) ------------------------------------
+# pytest      : runs tests/
+# websockets  : only used by tests/test_relay_contract.py to start a local relay

@@ -1,6 +1,7 @@
-﻿@echo off
+@echo off
+setlocal
 echo ====================================
-echo  MollyPaw Builder - Beta 0.0.0.1.5
+echo  MollyPaw Builder - Beta 0.0.0.2.0
 echo ====================================
 echo.
 
@@ -8,21 +9,28 @@ REM Check Python
 python --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not found. Please install Python 3.9+
-    pause
-    exit /b 1
+    goto fail
 )
 
+REM Local build uses .venv. In CI the runner's python already has everything,
+REM so skip the venv (creating one would just waste a minute).
+set "PY=python"
+if defined CI goto deps
 if not exist .venv\Scripts\python.exe python -m venv .venv
-set PY=.venv\Scripts\python.exe
+set "PY=.venv\Scripts\python.exe"
 
-REM Install dependencies
+:deps
 echo [1/3] Installing dependencies...
+if defined CI goto deps_skipped
 %PY% -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies
-    pause
-    exit /b 1
+    goto fail
 )
+goto deps_done
+:deps_skipped
+echo       skipped (CI mode: the workflow already installed them)
+:deps_done
 
 echo.
 echo [2/3] Building executable with PyInstaller...
@@ -46,11 +54,9 @@ echo [2/3] Building executable with PyInstaller...
     --hidden-import PIL ^
     --hidden-import PIL._tkinter_finder ^
     main.py
-
 if errorlevel 1 (
     echo [ERROR] PyInstaller build failed
-    pause
-    exit /b 1
+    goto fail
 )
 
 echo.
@@ -68,4 +74,9 @@ echo ====================================
 echo  Build complete!
 echo  Output: dist\MollyPaw.exe
 echo ====================================
-pause
+if not defined CI pause
+exit /b 0
+
+:fail
+if not defined CI pause
+exit /b 1

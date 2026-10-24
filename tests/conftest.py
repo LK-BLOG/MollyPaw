@@ -106,3 +106,8 @@ def main_module():
     finally:
         if real is not None:
             sys.modules["webview"] = real
+        else:
+            # 之前从没 import 过真 webview —— 必须把假模块摘掉，
+            # 否则后面 test_webview_api 拿到的就是 fake.Window，
+            # 报"destroy/show/restore/hide 不存在"（实际是假模块没有）。
+            sys.modules.pop("webview", None)

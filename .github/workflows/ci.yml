@@ -52,10 +52,18 @@ jobs:
         working-directory: MollyPaw
         # 排除联网测试：它要访问 api.qrserver.com 拿标准 QR 做比对，
         # CI runner 到那个站不一定通 —— 通了是加分，不通不该让整轮红。
-        run: python -m pytest -q -m "not network"
-        env:
-          # pywebview 在无头环境要靠这个
-          DISPLAY: ":99"
+        shell: bash
+        # Linux 必须走 xvfb-run：
+        #   只 export DISPLAY=:99 是不够的 —— 那个 :99 根本没人起，
+        #   pywebview import 时会 Xlib.error.DisplayConnectionError: Can't connect to display ":99"。
+        # xvfb-run 会自己起一个虚拟屏并在结束后清理，比跨步骤后台进程可靠。
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+              python -m pytest -q -m "not network"
+          else
+            python -m pytest -q -m "not network"
+          fi
 
       # 回归防线：远程互联的加密层必须和 Python 端字节级一致。
       # 这个脚本会联网取标准实现的输出做比对，CI 里允许（不花用户流量）。
@@ -66,8 +74,14 @@ jobs:
       # 端到端冒烟：中继 + PC 端 + 模拟手机，走真实 WS 与真实加密
       - name: Relay end-to-end smoke
         working-directory: MollyPaw
+        shell: bash
         run: |
-          python -m pytest tests/test_relay_e2e.py tests/test_phone_cli.py -q
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+              python -m pytest tests/test_relay_e2e.py tests/test_phone_cli.py -q
+          else
+            python -m pytest tests/test_relay_e2e.py tests/test_phone_cli.py -q
+          fi
 
   # 打包检查：PyInstaller 能产出 exe 才算没坏
   package:

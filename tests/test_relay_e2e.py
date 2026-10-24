@@ -441,7 +441,13 @@ def test_fs_no_blocklist_user_requested_full_access(relay, manager):
     """用户明确要求不限目录 —— 系统目录也必须能列（这是需求不是 bug）。"""
     phone = make_ready_phone(relay, manager)
     try:
-        target = os.environ.get("SystemRoot", "C:\\Windows")
+        if os.name == "nt":
+            target = os.environ.get("SystemRoot", "C:\\Windows")
+        else:
+            # macOS / Linux 上没有 C:\Windows；挑一个肯定存在的系统目录
+            target = next(
+                (d for d in ("/usr", "/etc", "/") if os.path.isdir(d)), os.sep
+            )
         ok, listing = phone.call("fs.list", {"path": target})
         assert ok, listing
         assert len(listing["entries"]) > 0

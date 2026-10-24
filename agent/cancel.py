@@ -186,18 +186,67 @@ def kill_process_tree(pid, timeout=3.0):
         target_group = None
         own_group = None
 
-    if target_group is not None and target_group == own_group:
-        # 目标和我们同组 —— killpg 会连自己一起杀。只杀单个进程。
-        return _kill_one(pid)
+    # 先摸清整棵子树。**不能只靠 killpg**：
+    # 目标和我们同组时 killpg 会连自己一起杀（已踩），而"同组"恰恰是最常见
+    # 的情况（子进程没带 start_new_session=True）。这时唯一的正确做法是
+    # 把子孙进程逐个点名杀掉。
+    descendants = _posix_descendants(pid)
 
-    if target_group is not None:
+    killed = False
+
+    if target_group is not None and target_group != own_group:
         try:
             os.killpg(target_group, signal.SIGKILL)
-            return True
+            killed = True
         except OSError:
             pass
 
-    return _kill_one(pid)
+    # 补充清理：目标可能被移到了别的进程组、或者 killpg 半路失败。
+    # 从最深的开始杀，避免中间进程先死导致子树被 reparent 掉之后漏杀。
+    for child in reversed(descendants):
+        if _kill_one(child):
+            killed = True
+
+    return _kill_one(pid) or killed
+
+
+def _posix_descendants(pid):
+    """用 ps 列出 pid 的全部子孙进程（含曾孙等）。
+
+    POSIX 没有 /proc 的通用保证（macOS 压根没有），ps -e -o pid=,ppid=
+    两边都能用。拿不到就返回空列表 —— 调用方仍会尝试杀单个进程。
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ps", "-e", "-o", "pid=", "-o", "ppid="],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        ).stdout
+    except Exception:
+        return []
+
+    children = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            child_pid, parent_pid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        children.setdefault(parent_pid, []).append(child_pid)
+
+    found = []
+    stack = [pid]
+    while stack:
+        current = stack.pop()
+        for child_pid in children.get(current, ()):
+            found.append(child_pid)
+            stack.append(child_pid)
+    return found
 
 
 def _kill_one(pid):

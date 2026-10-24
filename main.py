@@ -1,30 +1,12 @@
 """MollyPaw - AI Agent Desktop Client + Desktop Pet"""
-import sys
 import os
-import tempfile
+import sys
 
-# Single-instance lock via file
-_LOCK_PATH = os.path.join(tempfile.gettempdir(), "MollyPaw.lock")
-def _check_single_instance():
-    try:
-        fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, str(os.getpid()).encode())
-        os.close(fd)
-        return True
-    except FileExistsError:
-        try:
-            with open(_LOCK_PATH, "r") as f:
-                old_pid = int(f.read().strip())
-            os.kill(old_pid, 0)
-            return False
-        except Exception:
-            try:
-                os.remove(_LOCK_PATH)
-            except Exception:
-                pass
-            return _check_single_instance()
+# 单实例锁：必须在 import webview 之前跑完（否则先起 GUI 再退出）。
+# 实现放在 agent/single_instance.py，只依赖标准库。
+from agent.single_instance import check_single_instance
 
-if not _check_single_instance():
+if not check_single_instance():
     sys.exit(0)
 
 import io
