@@ -110,7 +110,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "MollyPaw ${GITHUB_REF_NAME#beta-}" \
-            --notes-file MollyPaw/release-notes.md \
-            dist/MollyPaw.exe || echo "Release 已存在，跳过"
+          set -euo pipefail
+          # 必须显式带 --repo：checkout 把仓库放在 MollyPaw/ 子目录，
+          # 这一步在 workspace 根执行，gh 会报 "not a git repository"。
+          # 之前那句 || echo "Release 已存在，跳过" 把这个错误也一起吞了，
+          # 于是"CI 绿了但 Release 没建出来"。
+          REPO="${GITHUB_REPOSITORY}"
+          # tag 可能带 beta-/Beta- 前缀，标题只用纯版本号
+          VERSION=$(python -c "import re,sys; m=re.search(r'(\\d[\\d.]*)$', sys.argv[1]); print(m.group(1) if m else sys.argv[1])" "${GITHUB_REF_NAME}")
+          if gh release view "${GITHUB_REF_NAME}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --repo "${REPO}" \
+              --title "MollyPaw ${VERSION}" \
+              --notes-file MollyPaw/release-notes.md
+            gh release upload "${GITHUB_REF_NAME}" --repo "${REPO}" dist/MollyPaw.exe --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" --repo "${REPO}" \
+              --title "MollyPaw ${VERSION}" \
+              --notes-file MollyPaw/release-notes.md \
+              dist/MollyPaw.exe
+          fi
