@@ -34,6 +34,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
+      # pywebview 在 Linux 上 import 时就要连 X display，
+      # 没有就会 Xlib.error.DisplayNameError: Bad display name ""。
+      # 光 export DISPLAY 没用 —— 那个屏得真有人起，所以走 xvfb-run。
+      - name: Install xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+
       - name: Install
         working-directory: MollyPaw
         run: |
@@ -42,9 +52,16 @@ jobs:
           python -m pip install pytest websockets
       - name: Tests
         working-directory: MollyPaw
+        shell: bash
         # 排除联网测试（要访问 api.qrserver.com 拿标准 QR 比对，
         # runner 到那个站不一定通，不通不该让发版流程红）
-        run: python -m pytest -q -m "not network"
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+              python -m pytest -q -m "not network"
+          else
+            python -m pytest -q -m "not network"
+          fi
 
   package:
     needs: test
@@ -95,5 +112,5 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "MollyPaw ${GITHUB_REF_NAME#beta-}" \
-            --notes-file release-notes.md \
+            --notes-file MollyPaw/release-notes.md \
             dist/MollyPaw.exe || echo "Release 已存在，跳过"
