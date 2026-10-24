@@ -37,6 +37,7 @@ from agent.service import MollyPawService
 # 不能让整个应用打不开。用户装一次 requirements.txt 就有了。
 try:
     from agent.relay.manager import RelayManager, DEFAULT_RELAY_URL
+    from agent.version import APP_VERSION
     from agent.relay import crypto as relay_crypto
     HAS_RELAY = True
     RELAY_IMPORT_ERROR = ""
@@ -262,11 +263,29 @@ class MollyPawAPI:
         """生成配对码（一键导入）。可带 role=app|observer。
 
         返回里带 qr_png（base64 PNG），前端可直接显示二维码。
-        配对码形如 MP1.<b64(reg_token)>.<room>，含房间号 ——
-        所以手机端**只需要扫码**，不必先知道 PSK 就能找到房间。
+
+        **必须先连上中继才允许生成配对码。**
+        早先没有这道检查：中继没开也能点「添加设备」拿到一个看起来正常的
+        二维码，用户拿去扫，手机一直等不到响应 —— 界面在骗人。
         """
         try:
             mgr = self._ensure_relay()
+            st = mgr.status()
+            if not st.get("running"):
+                return json.dumps({
+                    "ok": False,
+                    "need_start": True,
+                    "error": "远程互联还没开启。先点「开启远程互联」，"
+                             "等状态变成「已连接」再添加设备。",
+                }, ensure_ascii=False)
+            if not st.get("connected"):
+                return json.dumps({
+                    "ok": False,
+                    "need_start": True,
+                    "error": "中继还没连上（当前状态：%s）。"
+                             "网络不稳时它会自己重试，等显示「已连接」再添加设备。"
+                             % (st.get("state") or "未知"),
+                }, ensure_ascii=False)
             try:
                 data = _load_json_payload(payload_json)
             except Exception:
@@ -302,6 +321,73 @@ class MollyPawAPI:
             return json.dumps({"ok": True, "pin": session}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+
+    # -- 自动更新 ----------------------------------------------------------
+
+    def version(self):
+        try:
+            from agent.version import APP_VERSION
+        except Exception:
+            APP_VERSION = "0.0.0"
+        return json.dumps({"ok": True, "version": APP_VERSION}, ensure_ascii=False)
+
+    def update_check(self):
+        """查有没有新版本（含更新说明，给弹窗用）。"""
+        try:
+            from agent import updater
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "error": "更新模块不可用：%s" % exc},
+                              ensure_ascii=False)
+        return json.dumps(updater.check(), ensure_ascii=False)
+
+    def update_download(self, payload_json="{}"):
+        """后台下载新版本，进度通过事件队列推给前端。"""
+        try:
+            from agent import updater
+            data = _load_json_payload(payload_json)
+            url = (data.get("url") or "").strip()
+            name = (data.get("name") or "MollyPaw.exe").strip()
+            if not url:
+                info = updater.check()
+                asset = (info or {}).get("asset") or {}
+                url = asset.get("url") or ""
+                name = asset.get("name") or name
+            if not url:
+                return json.dumps({"ok": False, "error": "没有可下载的安装包地址"},
+                                  ensure_ascii=False)
+
+            def on_progress(pct, done, total):
+                self._queue_event("_onUpdateProgress", {
+                    "percent": pct, "done": done, "total": total,
+                })
+
+            def on_done(path, exc):
+                if exc is not None:
+                    self._queue_event("_onUpdateFailed", {"error": str(exc)})
+                else:
+                    self._queue_event("_onUpdateReady", {
+                        "path": path,
+                        "frozen": updater.is_frozen(),
+                    })
+
+            updater.start_download_async(url, name, on_progress, on_done)
+            return json.dumps({"ok": True, "started": True}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
+    def update_apply(self):
+        """替换自身并重启（仅打包版可用）。"""
+        try:
+            from agent import updater
+            ok, err = updater.apply_update()
+            if not ok:
+                return json.dumps({"ok": False, "error": err}, ensure_ascii=False)
+            self._queue_event("_onUpdateApplying", {"ok": True})
+            # 给前端 300ms 把提示画出来再退出
+            threading.Timer(0.4, lambda: os._exit(0)).start()
+            return json.dumps({"ok": True, "restarting": True}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
 
     def relay_pin_cancel(self):
         try:
@@ -587,6 +673,10 @@ class MollyPawAPI:
                         self._send_json(json.loads(api_ref.relay_pin_current()))
                     elif self.path == "/api/relay/audit":
                         self._send_json(json.loads(api_ref.relay_audit("{}")))
+                    elif self.path == "/api/version":
+                        self._send_json(json.loads(api_ref.version()))
+                    elif self.path == "/api/update/check":
+                        self._send_json(json.loads(api_ref.update_check()))
                     elif self.path == "/api/relay/available":
                         self._send_json({"ok": True, "available": HAS_RELAY,
                                          "error": RELAY_IMPORT_ERROR})
@@ -761,6 +851,11 @@ class MollyPawAPI:
                     elif self.path == "/api/approve_tool":
                         result = api_ref.approve_tool(json.loads(body))
                         self._send_json(json.loads(result))
+                    # -- 自动更新（POST）
+                    elif self.path == "/api/update/download":
+                        self._send_json(json.loads(api_ref.update_download(body or "{}")))
+                    elif self.path == "/api/update/apply":
+                        self._send_json(json.loads(api_ref.update_apply()))
                     # -- 远程互联（POST：写操作）
                     elif self.path == "/api/relay/start":
                         self._send_json(json.loads(api_ref.relay_start()))

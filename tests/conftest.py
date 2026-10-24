@@ -100,8 +100,21 @@ def main_module():
     fake.create_window = lambda *a, **kw: None
     real = sys.modules.get("webview")
     sys.modules["webview"] = fake
+    # import main 会跑单实例锁：用户桌面上的 MollyPaw 很可能正开着，
+    # 于是 check_single_instance() 返回 False、main 直接 sys.exit(0)，
+    # 整批 HTTP 接口测试在 setup 阶段集体报 "SystemExit: 0"。
+    # 只在 import 的那一瞬放行，import 完立刻还原 ——
+    # 否则 test_single_instance 里的真实抢锁用例会全部失效。
+    prev_skip = os.environ.get("MOLLYPAW_SKIP_SINGLE_INSTANCE")
+    os.environ["MOLLYPAW_SKIP_SINGLE_INSTANCE"] = "1"
     try:
         import main as _main
+    finally:
+        if prev_skip is None:
+            os.environ.pop("MOLLYPAW_SKIP_SINGLE_INSTANCE", None)
+        else:
+            os.environ["MOLLYPAW_SKIP_SINGLE_INSTANCE"] = prev_skip
+    try:
         yield _main
     finally:
         if real is not None:

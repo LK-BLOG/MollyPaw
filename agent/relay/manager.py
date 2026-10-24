@@ -123,6 +123,10 @@ class RelayManager:
             on_state=self._on_link_state,
             on_new_peer=self._on_new_peer,
             logger=self._log,
+            # auto = 自动探测系统代理（Windows 注册表 / 环境变量）。
+            # 不传这个桌面端就裸连，TLS 握手实测 7s 甚至超时，
+            # 表现是"一直重连中"、手机永远等不到 PC 的 hello。
+            proxy=self.config.get("proxy", "auto"),
         )
         with self._lock:
             self.link = link
@@ -367,7 +371,8 @@ class RelayManager:
         """更新中继配置并落盘。psk 改了就断线重连。"""
         old_psk = self.config.get("psk")
         old_url = self.config.get("url")
-        for key in ("url", "psk", "auto_start", "force_ipv4"):
+        old_proxy = self.config.get("proxy", "auto")
+        for key in ("url", "psk", "auto_start", "force_ipv4", "proxy", "dev_id"):
             if key in kwargs and kwargs[key] is not None:
                 self.config[key] = kwargs[key]
 
@@ -378,7 +383,8 @@ class RelayManager:
                 self._log(f"config save failed: {exc}")
 
         changed = (self.config.get("psk") != old_psk
-                   or self.config.get("url") != old_url)
+                   or self.config.get("url") != old_url
+                   or self.config.get("proxy", "auto") != old_proxy)
         if changed and self.running:
             self.restart()
         return self.status()
@@ -388,6 +394,18 @@ class RelayManager:
         if not C.psk_ok(psk):
             return ""
         return C.derive_room(psk)
+
+    def _proxy_desc(self):
+        """当前实际会用的代理（给 UI 显示，排查"为什么连不上"用）。"""
+        try:
+            from agent.relay.net import resolve_proxy
+
+            proxy = resolve_proxy(self.config.get("proxy", "auto"))
+        except Exception:
+            return ""
+        if not proxy:
+            return ""
+        return "%s:%s" % (proxy.get("host", ""), proxy.get("port", ""))
 
     def status(self):
         with self._lock:
@@ -407,6 +425,8 @@ class RelayManager:
             "room": self.room(),
             "url": self.config.get("url") or DEFAULT_RELAY_URL,
             "psk_set": bool(self.config.get("psk")),
+            "proxy": self.config.get("proxy", "auto"),
+            "proxy_active": self._proxy_desc(),
             "busy": self.controller.busy,
             "owner": self.controller.owner,
             "devices": len(self.devices.devices()),

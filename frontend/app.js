@@ -55,6 +55,19 @@
       busy_hint: "Another round is still running. Stop it first.",
       live: "Live",
       polling: "Polling",
+      update_title: "Update available",
+      update_notes: "What's new",
+      update_now: "Update now",
+      update_later: "Later",
+      update_downloading: "Downloading update",
+      update_ready: "Update downloaded",
+      update_restart: "Restart & install",
+      update_failed: "Update failed",
+      update_dev_mode: "Running from source can't self-update; use git pull",
+      tc_history_args: "Arguments",
+      tc_history_result: "Result",
+      tc_history_expand: "Expand",
+      tc_history_collapse: "Collapse",
       relay_title: "Remote Access",
       relay_desc: "Connect your phone to this computer over an encrypted channel.",
       relay_enable: "Enable remote access",
@@ -215,6 +228,19 @@
       relay_room: "房间",
       relay_state: "状态",
       relay_stopped: "已关闭",
+      update_title: "有新版本可用",
+      update_notes: "更新内容",
+      update_now: "立即更新",
+      update_later: "稍后再说",
+      update_downloading: "正在下载新版本",
+      update_ready: "新版本已下载好",
+      update_restart: "重启并安装",
+      update_failed: "更新失败",
+      update_dev_mode: "源码运行不能自替换，请用 git pull 更新",
+      tc_history_args: "参数",
+      tc_history_result: "结果",
+      tc_history_expand: "展开",
+      tc_history_collapse: "收起",
       relay_title: "远程互联",
       relay_url: "中继地址",
       stop: "停止",
@@ -792,6 +818,88 @@
     }
   };
 
+  // 历史里的 tool_call 必须显示出来。
+  //
+  // 数据一直都在：core.py 往 history 里写的是
+  //   {"role":"assistant","content":"","tool_calls":[...]}
+  //   {"role":"tool","tool_call_id":"...","content":"执行结果"}
+  // 之前只渲染 role=user / role=assistant+content，于是：
+  //   - 纯工具轮次的 assistant 因为 content 为空被跳过；
+  //   - role=tool 的结果整条被丢掉。
+  // 用户看到的就是"历史里工具调用凭空消失"。
+  function renderToolCallHistory(calls, resultsById) {
+    var wrap = document.createElement("div");
+    wrap.className = "tc-history";
+    var head = document.createElement("div");
+    head.className = "tc-history-head";
+    var icon = document.createElement("span");
+    icon.textContent = "\uD83D\uDD27";
+    head.appendChild(icon);
+
+    var names = [];
+    (calls || []).forEach(function (tc) {
+      var fn = (tc && tc["function"]) || {};
+      names.push(fn.name || "tool");
+    });
+    var nameEl = document.createElement("span");
+    nameEl.className = "tc-history-name";
+    nameEl.textContent = names.join(" \u00B7 ") || "tool";
+    head.appendChild(nameEl);
+
+    var toggle = document.createElement("span");
+    toggle.className = "tc-history-toggle";
+    toggle.textContent = t("tc_history_expand");
+    head.appendChild(toggle);
+
+    var body = document.createElement("div");
+    body.style.display = "none";
+
+    (calls || []).forEach(function (tc) {
+      var fn = (tc && tc["function"]) || {};
+      var callId = tc && tc.id;
+      var item = document.createElement("details");
+      var summary = document.createElement("summary");
+      summary.textContent = (fn.name || "tool");
+      item.appendChild(summary);
+
+      var argsLabel = document.createElement("div");
+      argsLabel.className = "tc-status";
+      argsLabel.textContent = t("tc_history_args");
+      item.appendChild(argsLabel);
+
+      var pre = document.createElement("pre");
+      var raw = fn.arguments;
+      if (typeof raw === "string") {
+        try { raw = JSON.parse(raw); } catch (e) { /* 原样显示 */ }
+      }
+      try { pre.textContent = JSON.stringify(raw, null, 2); }
+      catch (e) { pre.textContent = String(raw); }
+      item.appendChild(pre);
+
+      var res = resultsById[callId];
+      if (res !== undefined) {
+        var resLabel = document.createElement("div");
+        resLabel.className = "tc-status";
+        resLabel.textContent = t("tc_history_result");
+        item.appendChild(resLabel);
+        var resPre = document.createElement("pre");
+        resPre.textContent = String(res).substring(0, 4000);
+        item.appendChild(resPre);
+      }
+      body.appendChild(item);
+    });
+
+    head.addEventListener("click", function () {
+      var open = body.style.display !== "none";
+      body.style.display = open ? "none" : "";
+      toggle.textContent = open ? t("tc_history_expand") : t("tc_history_collapse");
+    });
+
+    wrap.appendChild(head);
+    wrap.appendChild(body);
+    if (messagesEl) messagesEl.appendChild(wrap);
+  }
+
   window._onLoadConversationResult = function(result) {
     if (result.ok && result.conversation) {
       currentConvId = result.conversation.id;
@@ -800,15 +908,26 @@
       if (messagesEl) messagesEl.innerHTML = "";
       hideWelcome();
       var msgs = result.conversation.messages || [];
-      for (var i = 0; i < msgs.length; i++) {
-        var m = msgs[i];
-        if (m.role === "system") continue;
-        if (m.role === "user") {
-          appendMessage("user", m.content);
-        } else if (m.role === "assistant" && m.content) {
-          appendMessage("assistant", m.content);
+      // 先把 role=tool 的结果按 tool_call_id 建索引，供上面的卡片引用
+      var resultsById = {};
+      for (var k = 0; k < msgs.length; k++) {
+        if (msgs[k].role === "tool" && msgs[k].tool_call_id) {
+          resultsById[msgs[k].tool_call_id] = msgs[k].content || "";
         }
       }
+      for (var i = 0; i < msgs.length; i++) {
+        var m = msgs[i];
+        if (m.role === "system" || m.role === "tool") continue;
+        if (m.role === "user") {
+          appendMessage("user", m.content);
+        } else if (m.role === "assistant") {
+          if (m.content) appendMessage("assistant", m.content);
+          if (m.tool_calls && m.tool_calls.length) {
+            renderToolCallHistory(m.tool_calls, resultsById);
+          }
+        }
+      }
+      scrollToBottom();
     }
   };
 
@@ -1447,6 +1566,61 @@
     if (url && $("relay-url")) $("relay-url").value = url;
   }
 
+  // 通道显示：当前到底走代理还是直连。
+  // 这是排查"手机连不上"时最有用的一行 —— 裸连 pages.dev 在国内会被
+  // 干扰到连上就断，用户必须看得见自己在走什么路。
+  function renderRelayTransport(st) {
+    var roomEl = $("relay-room");
+    if (!roomEl || !roomEl.parentNode) return;
+    var el = $("relay-transport");
+    if (!el) {
+      el = document.createElement("span");
+      el.id = "relay-transport";
+      el.className = "relay-transport";
+      roomEl.parentNode.insertBefore(el, roomEl.nextSibling);
+    }
+    var running = !!st.running;
+    if (!running) { el.textContent = ""; return; }
+    if (st.proxy_active) {
+      el.textContent = "\uD83D\uDD01 代理 " + st.proxy_active;
+      el.title = "经系统代理连接中继";
+      el.className = "relay-transport via-proxy";
+    } else {
+      el.textContent = "\u26A1 直连";
+      el.title = "没检测到系统代理，正在直连中继";
+      el.className = "relay-transport direct";
+    }
+  }
+
+  // 没连上中继就别让人点「添加设备」——
+  // 那个二维码是死的，手机扫了只会一直等。
+  function renderRelayPairGuard(connected) {
+    var addApp = $("relay-add-app");
+    var addObs = $("relay-add-obs");
+    var box = $("relay-pair-guard");
+    if (!box) {
+      var actions = document.querySelector(".relay-pair-actions");
+      if (actions && actions.parentNode) {
+        box = document.createElement("p");
+        box.id = "relay-pair-guard";
+        box.className = "relay-hint relay-pair-guard";
+        actions.parentNode.insertBefore(box, actions.nextSibling);
+      }
+    }
+    [addApp, addObs].forEach(function (btn) {
+      if (!btn) return;
+      btn.disabled = !connected;
+      btn.title = connected ? "" : "先开启远程互联并连上中继";
+    });
+    if (box) {
+      box.hidden = connected;
+      if (!connected) {
+        box.textContent = "先点上面的「开启远程互联」，等状态变成「已连接」，"
+          + "再添加设备。中继没连上时生成的配对码是死的。";
+      }
+    }
+  }
+
   function renderRelayStatus(st) {
     var stateEl = $("relay-state");
     var roomEl = $("relay-room");
@@ -1477,6 +1651,8 @@
       toggle.textContent = running ? t("relay_stop") : t("relay_enable");
       toggle.dataset.running = running ? "1" : "0";
     }
+    renderRelayTransport(st);
+    renderRelayPairGuard(running && !!st.connected);
   }
 
   function setPskField(saved, problems) {
@@ -1906,7 +2082,165 @@
   setThinkingLevel(localStorage.getItem("mollypaw_thinking") || "none", false);
   getAPI("/api/config");
   getAPI("/api/balance");
+
+  // ---- 自动更新 --------------------------------------------------------
+  // 流程：启动时 check -> 有新版弹窗（带更新内容）-> 立即更新则后台下载
+  // -> 左下角进度条 -> 下完变「重启并安装」-> POST apply -> 程序自己换 exe 重启。
+  var updateInfo = null;
+
+  function fmtSize(bytes) {
+    var n = Number(bytes) || 0;
+    if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+    if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+    return n + " B";
+  }
+
+  function renderUpdateNotes(text) {
+    var box = $("update-notes");
+    if (!box) return;
+    // Release notes 就是 CHANGELOG 正文，是 markdown；用 marked 渲染，
+    // 没加载 marked 就退回纯文本 —— 但内容一定得展示出来。
+    if (typeof marked !== "undefined" && text) {
+      try { box.innerHTML = marked.parse(text); return; } catch (e) {}
+    }
+    box.textContent = text || "";
+  }
+
+  function showUpdateModal(info) {
+    updateInfo = info;
+    var overlay = $("update-overlay");
+    if (!overlay) return;
+    var fromEl = $("update-from");
+    var toEl = $("update-to");
+    if (fromEl) fromEl.textContent = "v" + (info.current || "");
+    if (toEl) toEl.textContent = "v" + (info.latest || "");
+    var sub = $("update-title");
+    if (sub && info.asset && info.asset.size) {
+      sub.textContent = t("update_title") + " · " + fmtSize(info.asset.size);
+    }
+    renderUpdateNotes(info.notes || "");
+    var err = $("update-error");
+    if (err) err.hidden = true;
+    var now = $("update-now");
+    if (now) {
+      if (info.frozen === false) {
+        now.disabled = true;
+        now.title = t("update_dev_mode");
+        if (err) {
+          err.hidden = false;
+          err.textContent = t("update_dev_mode");
+        }
+      } else {
+        now.disabled = false;
+      }
+    }
+    overlay.style.display = "flex";
+  }
+
+  function hideUpdateModal() {
+    var overlay = $("update-overlay");
+    if (overlay) overlay.style.display = "none";
+  }
+
+  function setUpdateProgress(pct, label) {
+    var box = $("update-progress");
+    var fill = $("update-progress-fill");
+    var pctEl = $("update-progress-pct");
+    var lab = $("update-progress-label");
+    if (box) box.hidden = false;
+    if (fill) fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+    if (pctEl) pctEl.textContent = Math.max(0, Math.min(100, pct)) + "%";
+    if (lab && label) lab.textContent = label;
+  }
+
+  function hideUpdateProgress() {
+    var box = $("update-progress");
+    if (box) box.hidden = true;
+    var actions = $("update-progress-actions");
+    if (actions) actions.hidden = true;
+  }
+
+  function startUpdateDownload() {
+    if (!updateInfo) return;
+    hideUpdateModal();
+    setUpdateProgress(0, t("update_downloading"));
+    postAPI("/api/update/download", {
+      url: (updateInfo.asset && updateInfo.asset.url) || "",
+      name: (updateInfo.asset && updateInfo.asset.name) || "MollyPaw.exe"
+    }).then(function (res) {
+      if (!res || !res.ok) {
+        setUpdateProgress(0, t("update_failed"));
+        var err = $("update-error");
+        showUpdateModal(updateInfo);
+        if (err) { err.hidden = false; err.textContent = (res && res.error) || t("update_failed"); }
+      }
+    }).catch(function (e) {
+      updateInfo = updateInfo;
+      hideUpdateProgress();
+      alert(t("update_failed") + ": " + e);
+    });
+  }
+
+  window._onUpdateProgress = function (payload) {
+    setUpdateProgress(payload.percent || 0, t("update_downloading"));
+  };
+
+  window._onUpdateReady = function (payload) {
+    setUpdateProgress(100, t("update_ready"));
+    var actions = $("update-progress-actions");
+    if (actions) actions.hidden = false;
+    var pctEl = $("update-progress-pct");
+    if (pctEl) pctEl.textContent = "100%";
+  };
+
+  window._onUpdateFailed = function (payload) {
+    var lab = $("update-progress-label");
+    if (lab) lab.textContent = t("update_failed") + "：" + ((payload && payload.error) || "");
+    var actions = $("update-progress-actions");
+    if (actions) actions.hidden = true;
+  };
+
+  window._onUpdateApplying = function () {
+    var lab = $("update-progress-label");
+    if (lab) lab.textContent = "正在重启…";
+  };
+
+  function applyUpdateNow() {
+    postAPI("/api/update/apply", {}).then(function (res) {
+      if (res && res.ok) {
+        var lab = $("update-progress-label");
+        if (lab) lab.textContent = "正在重启…";
+      } else {
+        var el = $("update-error");
+        hideUpdateProgress();
+        showUpdateModal(updateInfo);
+        if (el) { el.hidden = false; el.textContent = (res && res.error) || t("update_failed"); }
+      }
+    }).catch(function (e) {
+      var el = $("update-error");
+      if (el) { el.hidden = false; el.textContent = String(e); }
+    });
+  }
+
+  (function wireUpdate() {
+    var now = $("update-now");
+    if (now) now.addEventListener("click", startUpdateDownload);
+    var later = $("update-later");
+    if (later) later.addEventListener("click", hideUpdateModal);
+    var restart = $("update-restart");
+    if (restart) restart.addEventListener("click", applyUpdateNow);
+  })();
+
+  function checkUpdate() {
+    getAPI("/api/update/check").then(function (info) {
+      if (info && info.ok && info.available) showUpdateModal(info);
+    }).catch(function () {});
+  }
+
   loadConversations();
+
+  // 启动后延迟 2 秒查更新，别和首屏抢带宽
+  setTimeout(checkUpdate, 2000);
   if (userInput) userInput.focus();
   // Intercept markdown links to open in system browser
   document.addEventListener("click", function(e) {

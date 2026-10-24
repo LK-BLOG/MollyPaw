@@ -18,14 +18,15 @@ import time
 
 from agent.relay import crypto as C
 from agent.relay import protocol as P
-from agent.relay.net import prefer_ipv4
+from agent.relay.net import prefer_ipv4, proxy_kwargs, resolve_proxy
 
 
 class RelayLink:
     """与中继的一条连接。"""
 
     def __init__(self, url, room, role, psk, dev_id=None, hello_extra=None,
-                 on_payload=None, on_state=None, logger=None, on_new_peer=None):
+                 on_payload=None, on_state=None, logger=None, on_new_peer=None,
+                 proxy=None):
         """
         url          中继地址，如 wss://mollypaw-online.pages.dev/server
         room         32 位 hex
@@ -33,6 +34,7 @@ class RelayLink:
         psk          预共享密钥（明文）
         on_payload(method, params, msg_id, role, dev)   收到业务载荷
         on_state(state, info)                              连接状态变化回调
+        proxy        代理模式："auto"（探测系统代理，默认）/ "direct" / "http://h:p"
         """
         self.url = url
         self.room = room
@@ -44,6 +46,7 @@ class RelayLink:
         self.on_state = on_state
         self.on_new_peer = on_new_peer
         self.logger = logger
+        self.proxy_mode = proxy
 
         self.ws = None
         self._ws_lock = threading.RLock()
@@ -119,8 +122,15 @@ class RelayLink:
 
     # -- 连接 --------------------------------------------------------------
 
-    def connect(self, timeout=20):
-        """建立一条连接并完成握手。成功返回 True。"""
+    def connect(self, timeout=30):
+        """建立一条连接并完成握手。成功返回 True。
+
+        代理这件事必须显式处理：websocket-client 只认 http_proxy 环境变量，
+        不读 Windows 系统代理（注册表）。桌面端是 GUI 起的进程，环境里
+        什么都没有 —— 裸连时 TLS 握手实测会 7s 甚至超时（SNI 被干扰），
+        于是 connect 判失败、无限重连，手机端就永远等不到 PC 的 hello。
+        见 agent/relay/net.py 顶部的实测数据。
+        """
         import websocket
 
         full = f"{self.url}?room={self.room}" if "?" not in self.url else \
@@ -157,7 +167,7 @@ class RelayLink:
         frame.update({k: v for k, v in base.items() if k not in frame})
 
         with prefer_ipv4():
-            ws = websocket.create_connection(full, timeout=timeout)
+            ws = self._open_ws(full, timeout)
         with self._ws_lock:
             self.ws = ws
         self.connected_at = time.time()
@@ -172,6 +182,26 @@ class RelayLink:
         )
         self._recv_thread.start()
         return True
+
+    def _open_ws(self, full, timeout):
+        """开 WebSocket：并发竞速 + 重试（见 agent/relay/connect.py）。
+
+        为什么不是简单的一次 create_connection：到 pages.dev 的直连 TLS
+        握手是**概率性**的（实测三次里一次超时、一次 7.11s、一次 0.58s）。
+        一次失败不代表不可达，所以短超时 + 多轮重试；有系统代理时再并发
+        一路代理，谁先通用谁。**不要求用户装代理/VPN。**
+        """
+        from agent.relay.connect import open_ws
+
+        # 单次尝试别超过 8 秒，否则重试没有意义（外层 connect 的超时是总预算）
+        per_try = max(4.0, min(8.0, float(timeout) / 2.0))
+        return open_ws(
+            full,
+            timeout=per_try,
+            attempts=4,
+            proxy_mode=self.proxy_mode,
+            logger=self._log,
+        )
 
     def _send_raw(self, frame):
         text = json.dumps(frame, ensure_ascii=False)

@@ -78,6 +78,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+      - name: Apply version from tag
+        working-directory: MollyPaw
+        shell: bash
+        run: |
+          # 版本号唯一真源是 tag，写进 agent/version.py 让自动更新能比大小
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            python tools/apply_version.py "${GITHUB_REF_NAME}"
+          else
+            python tools/apply_version.py
+          fi
       - name: Build
         working-directory: MollyPaw
         run: .\build.bat

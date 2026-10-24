@@ -62,7 +62,18 @@ def _pid_alive_windows(pid) -> bool:
 
 
 def check_single_instance(lock_path=None) -> bool:
-    """抢锁。True = 我是唯一实例；False = 已经有一个活着的实例。"""
+    """抢锁。True = 我是唯一实例；False = 已经有一个活着的实例。
+
+    环境变量 MOLLYPAW_SKIP_SINGLE_INSTANCE=1 时直接放行：
+    测试进程要 import main.py，而用户桌面上的 MollyPaw 很可能正开着，
+    真去抢锁会让整轮 pytest 被 SystemExit(0) 打断（19 个测试报错）。
+    这是**测试专用**逃生口，正常启动永远不会设它。
+    """
+    if os.environ.get("MOLLYPAW_SKIP_SINGLE_INSTANCE", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    ):
+        return True
+
     path = lock_path or LOCK_PATH
 
     # 有限次重试：万一别的实例刚好在同一个瞬间清锁，别无限递归。

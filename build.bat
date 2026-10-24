@@ -1,7 +1,7 @@
 @echo off
 setlocal
 echo ====================================
-echo  MollyPaw Builder - Beta 0.0.0.2.0
+echo  MollyPaw Builder - Beta 0.0.0.2.1
 echo ====================================
 echo.
 

@@ -45,7 +45,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from agent.relay import crypto as C
 from agent.relay import protocol as P
-from agent.relay.net import prefer_ipv4
+from agent.relay.net import prefer_ipv4, proxy_kwargs
 
 
 def state_path():
@@ -108,6 +108,10 @@ class PhoneClient:
         self.peer_hs = None
         self._tx_seq = 0
 
+        # auto=探测系统代理（并发竞速），direct=强制直连。
+        # 用来验证"没有代理的用户"到底能不能连。
+        self.proxy_mode = "auto"
+
         self.inbox = []
         self.responses = {}
         self._lock = threading.RLock()
@@ -140,8 +144,14 @@ class PhoneClient:
 
         self.room = room
         full = f"{self.url}?room={room}"
+        # 手机端同样要重试：直连 pages.dev 的 TLS 握手实测 7s 甚至超时，
+        # 但干扰是概率性的，重试通常能过。真机走系统 ProxySelector，
+        # 这里是命令行替身，共用同一套连接逻辑。
+        from agent.relay.connect import open_ws
+
         with prefer_ipv4():
-            self.ws = websocket.create_connection(full, timeout=timeout)
+            self.ws = open_ws(full, timeout=8.0, attempts=4,
+                              proxy_mode=self.proxy_mode)
 
         # 全新的握手状态 —— 一个都不能漏
         self.eph_priv, self.eph_pub = C.gen_ephemeral()
