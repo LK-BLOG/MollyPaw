@@ -7,6 +7,17 @@ import sys
 from agent.single_instance import check_single_instance
 
 if not check_single_instance():
+    # 以前这里是**静默** sys.exit(0)：用户看到的现象就是
+    # 「python main.py 什么都不输出」「双击图标没反应」，像程序坏了。
+    # 其实只是已经开着一个。至少把原因说出来，能捞回窗口就捞回来。
+    print("MollyPaw 已经在运行了（单实例）。", flush=True)
+    print("要再开一个请先关掉托盘里的那个，或者用托盘菜单退出。", flush=True)
+    try:
+        from agent.single_instance import focus_existing_window
+
+        focus_existing_window()
+    except Exception:
+        pass
     sys.exit(0)
 
 import io

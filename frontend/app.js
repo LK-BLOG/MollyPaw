@@ -10,7 +10,11 @@
     });
   }
 
-  var API_BASE = "http://127.0.0.1:18765";
+  // 页面由同一个 HTTP 服务提供，所以默认走相对路径。
+  // 只有从 file:// 直接打开时才需要写死地址（历史行为，保留兜底）。
+  var API_BASE = (location.protocol === "file:")
+    ? "http://127.0.0.1:18765"
+    : "";
 
   // ---- i18n Translations ----
   var translations = {
@@ -2231,6 +2235,19 @@
     if (restart) restart.addEventListener("click", applyUpdateNow);
   })();
 
+  // 左下角的版本号必须跟版本真源（tag -> agent/version.py）一致。
+  // 之前写死 0.0.0.1.5，发了好几个版本还显示旧号，排查时非常误导。
+  function syncVersionLabel() {
+    getAPI("/api/version").then(function (res) {
+      if (!res || !res.ok || !res.version) return;
+      var label = "MollyPaw Beta " + res.version;
+      // 底部那行是 <p class="input-hint" data-i18n="hint">，i18n 键是 hint；
+      // 顺手兼容以后可能加的 #version-hint。
+      var els = document.querySelectorAll('[data-i18n="hint"], #version-hint');
+      for (var i = 0; i < els.length; i++) els[i].textContent = label;
+    }).catch(function () {});
+  }
+
   function checkUpdate() {
     getAPI("/api/update/check").then(function (info) {
       if (info && info.ok && info.available) showUpdateModal(info);
@@ -2241,6 +2258,7 @@
 
   // 启动后延迟 2 秒查更新，别和首屏抢带宽
   setTimeout(checkUpdate, 2000);
+  syncVersionLabel();
   if (userInput) userInput.focus();
   // Intercept markdown links to open in system browser
   document.addEventListener("click", function(e) {

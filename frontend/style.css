@@ -1570,7 +1570,7 @@ body {
   display: flex;
   flex-direction: column;
   background: #FFF8F0;
-  border: 1px solid #E7D6C2;
+  border: 1px solid rgba(166, 123, 91, .32);
   border-radius: 16px;
   box-shadow: 0 18px 48px rgba(107, 66, 38, .26);
   overflow: hidden;
@@ -1624,12 +1624,12 @@ body {
   min-height: 120px;
   overflow-y: auto;
   background: #F5EDE3;
-  border: 1px solid #E7D6C2;
+  border: 1px solid rgba(166, 123, 91, .32);
   border-radius: 10px;
   padding: 12px 14px;
   font-size: 13px;
   line-height: 1.62;
-  color: #5A3B21;
+  color: #6B4226;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1643,7 +1643,7 @@ body {
 .update-notes ul { margin: 6px 0; padding-left: 20px; }
 .update-notes li { margin: 3px 0; }
 .update-notes code {
-  background: #EADCCB;
+  background: #F5EDE3;
   border-radius: 4px;
   padding: 1px 4px;
   font-size: 12px;
@@ -1653,7 +1653,8 @@ body {
   margin: 10px 20px 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #FBE9E7;
+  background: #FFF8F0;
+  border: 1px solid rgba(107, 66, 38, .22);
   color: #A94442;
   font-size: 13px;
 }
@@ -1677,7 +1678,7 @@ body {
 .update-actions .btn-approve,
 .update-progress-actions .btn-approve {
   background: #D4823A;
-  color: #2A1B0E;
+  color: #3A2A1A;
   font-weight: 600;
 }
 
@@ -1702,7 +1703,7 @@ body {
   bottom: 18px;
   width: min(320px, calc(100vw - 36px));
   background: #FFF8F0;
-  border: 1px solid #E7D6C2;
+  border: 1px solid rgba(166, 123, 91, .32);
   border-radius: 12px;
   box-shadow: 0 10px 30px rgba(107, 66, 38, .2);
   padding: 12px 14px;
@@ -1723,7 +1724,7 @@ body {
 .update-progress-track {
   height: 6px;
   border-radius: 999px;
-  background: #EADCCB;
+  background: #F5EDE3;
   overflow: hidden;
 }
 
@@ -1731,7 +1732,7 @@ body {
   height: 100%;
   width: 0;
   border-radius: 999px;
-  background: linear-gradient(90deg, #D4823A, #E9A05C);
+  background: linear-gradient(90deg, #D4823A, #A67B5B);
   transition: width .2s ease;
 }
 
@@ -1761,11 +1762,11 @@ body {
   margin: 4px 0 0;
   padding: 8px 10px;
   background: #F5EDE3;
-  border: 1px solid #E7D6C2;
+  border: 1px solid rgba(166, 123, 91, .32);
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.5;
-  color: #5A3B21;
+  color: #6B4226;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 240px;

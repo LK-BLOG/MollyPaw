@@ -61,6 +61,66 @@ def _pid_alive_windows(pid) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def focus_existing_window() -> bool:
+    """把已经在跑的那个 MollyPaw 窗口提到前台（Windows）。
+
+    纯粹是体验：用户以为程序没启动，其实窗口在后面。做不到就返回 False，
+    绝不能让调用方因为这段崩掉。
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        EnumWindows = user32.EnumWindows
+        GetWindowTextW = user32.GetWindowTextW
+        IsWindowVisible = user32.IsWindowVisible
+        SetForegroundWindow = user32.SetForegroundWindow
+        ShowWindow = user32.ShowWindow
+        GetWindowThreadProcessId = user32.GetWindowThreadProcessId
+
+        # 锁文件里的 pid 就是那个实例
+        try:
+            with open(LOCK_PATH, "r", encoding="utf-8", errors="replace") as f:
+                target_pid = int(f.read().strip() or "0")
+        except (OSError, ValueError):
+            target_pid = 0
+
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _enum(hwnd, _lparam):
+            if not IsWindowVisible(hwnd):
+                return True
+            length = GetWindowTextW(hwnd, None, 0)
+            if length <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value
+            if "MollyPaw" not in title:
+                return True
+            pid = wintypes.DWORD()
+            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if target_pid and pid.value != target_pid:
+                return True
+            found.append(hwnd)
+            return False
+
+        EnumWindows(_enum, 0)
+        if not found:
+            return False
+        hwnd = found[0]
+        SW_RESTORE = 9
+        ShowWindow(hwnd, SW_RESTORE)
+        SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
+
 def check_single_instance(lock_path=None) -> bool:
     """抢锁。True = 我是唯一实例；False = 已经有一个活着的实例。
 
