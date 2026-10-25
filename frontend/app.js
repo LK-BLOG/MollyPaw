@@ -72,6 +72,13 @@
       tc_history_result: "Result",
       tc_history_expand: "Expand",
       tc_history_collapse: "Collapse",
+      update_restarting: "Restarting…",
+      kbd_hint_insert: "Enter queues a message while AI is working",
+      kbd_hint_stop: "Press Esc twice to stop AI",
+      queue_pending: "{n} queued — sent when this round ends",
+      relay_via_proxy: "Proxy",
+      relay_direct: "Direct",
+      relay_pair_guard: "Turn on remote access first and wait until it says Connected, then add a device. A pairing code generated while the relay is offline is dead.",
       relay_title: "Remote Access",
       relay_desc: "Connect your phone to this computer over an encrypted channel.",
       relay_enable: "Enable remote access",
@@ -113,6 +120,10 @@
       send: "Send",
       balance_label: "Balance: ",
       balance_unavailable: "Balance unavailable",
+      balance_no_endpoint: "No balance endpoint for this provider",
+      balance_unsupported: "This provider doesn't expose balance",
+      balance_no_field: "Balance response not recognised",
+      balance_no_key: "Add an API key to see balance",
       cost_label: "Cost: ",
       thinking_depth: "Reasoning",
       thinking_none: "None",
@@ -245,6 +256,13 @@
       tc_history_result: "结果",
       tc_history_expand: "展开",
       tc_history_collapse: "收起",
+      update_restarting: "正在重启…",
+      kbd_hint_insert: "AI 工作时按 Enter 插入消息",
+      kbd_hint_stop: "连按两次 Esc 停止 AI",
+      queue_pending: "已排队 {n} 条，本轮结束自动发送",
+      relay_via_proxy: "代理",
+      relay_direct: "直连",
+      relay_pair_guard: "先点上面的「开启远程互联」，等状态变成「已连接」，再添加设备。中继没连上时生成的配对码是死的。",
       relay_title: "远程互联",
       relay_url: "中继地址",
       stop: "停止",
@@ -264,6 +282,10 @@
       send: "发送",
       balance_label: "余额：",
       balance_unavailable: "余额暂不可用",
+      balance_no_endpoint: "这个服务商没有余额接口",
+      balance_unsupported: "这个服务商不提供余额查询",
+      balance_no_field: "余额返回里没认出来的字段",
+      balance_no_key: "先填 API Key 才能看余额",
       cost_label: "本轮消耗：",
       thinking_depth: "思考深度",
       thinking_none: "无",
@@ -375,6 +397,10 @@
   var sendBtn        = $("send-btn");
   var chatHistory    = $("chat-history");
   var isLoading = false;
+  // 连按两次 Esc 停止：记录上一次 Esc 的时间
+  var lastEscapeAt = 0;
+  // AI 工作时按 Enter 发的消息排这里，本轮一结束立刻发出去
+  var pendingQueue = [];
 
   var approvalBtn    = $("approval-btn");
   var approvalLabelEl = $("approval-label");
@@ -664,28 +690,80 @@
   // ---- Tool Call Indicators ----
   var pendingApprove = null;
 
-  function showToolCall(info) {
-    hideWelcome();
+  // 唯一的工具调用卡片渲染入口。
+  //
+  // 实时（showToolCall）和历史（renderToolCallHistory）必须共用它 ——
+  // 早先两处各写一套样式，结果同一段对话刷新前后长得完全不一样。
+  //
+  // opts: { id, name, args, danger, result, rejected, running }
+  function renderToolCallCard(opts) {
     var div = document.createElement("div");
     div.className = "tool-call-indicator";
-    div.id = "tool-call-" + info.request_id;
+    if (opts.id) div.id = "tool-call-" + opts.id;
 
     var argsStr = "";
-    try { argsStr = JSON.stringify(info.args, null, 2); } catch(e) { argsStr = String(info.args); }
-    if (argsStr.length > 200) argsStr = argsStr.substring(0, 200) + "...";
+    try {
+      argsStr = (typeof opts.args === "string")
+        ? opts.args
+        : JSON.stringify(opts.args === undefined ? {} : opts.args, null, 2);
+    } catch (e) { argsStr = String(opts.args); }
+    if (argsStr.length > 400) argsStr = argsStr.substring(0, 400) + "…";
 
-    div.innerHTML = '<div class="tc-header">' +
-      '<span class="tc-icon">\uD83D\uDD27</span>' +
-      '<span class="tc-name">' + escapeHtml(info.name) + '</span>' +
-      '<span class="tc-danger tc-danger-' + info.danger_level + '">' + dangerLabel(info.danger_level) + '</span>' +
-      '</div>' +
-      '<pre class="tc-args">' + escapeHtml(argsStr) + '</pre>' +
-      '<div class="tc-status tc-running">' + t("tc_running") + '</div>';
+    var dangerHtml = "";
+    if (opts.danger) {
+      dangerHtml = '<span class="tc-danger tc-danger-' + opts.danger + '">'
+        + escapeHtml(dangerLabel(opts.danger)) + '</span>';
+    }
 
-    div.addEventListener("click", function() {
+    var html = '<div class="tc-header">'
+      + '<span class="tc-icon">\uD83D\uDD27</span>'
+      + '<span class="tc-name">' + escapeHtml(opts.name || "tool") + '</span>'
+      + dangerHtml
+      + '<span class="tc-toggle">' + t("tc_history_expand") + '</span>'
+      + '</div>'
+      + '<pre class="tc-args">' + escapeHtml(argsStr) + '</pre>';
+
+    if (opts.result !== undefined && opts.result !== null && opts.result !== "") {
+      var resText = String(opts.result);
+      if (resText.length > 400) resText = resText.substring(0, 400) + "…";
+      html += '<pre class="tc-result">' + escapeHtml(resText) + '</pre>';
+    }
+
+    var statusClass = "tc-running";
+    var statusText = t("tc_running");
+    if (opts.rejected) {
+      statusClass = "tc-rejected";
+      statusText = "\u274C " + t("tc_rejected");
+    } else if (opts.result !== undefined && opts.result !== null) {
+      var failed = /^Error/i.test(String(opts.result));
+      statusClass = failed ? "tc-error" : "tc-done";
+      statusText = failed
+        ? "\u274C " + t("tc_error")
+        : "\u2705 " + t("tc_done");
+    }
+    html += '<div class="tc-status ' + statusClass + '">' + statusText + '</div>';
+
+    div.innerHTML = html;
+    div.addEventListener("click", function () {
       div.classList.toggle("expanded");
+      var toggle = div.querySelector(".tc-toggle");
+      if (toggle) {
+        toggle.textContent = div.classList.contains("expanded")
+          ? t("tc_history_collapse") : t("tc_history_expand");
+      }
     });
+    return div;
+  }
 
+  function showToolCall(info) {
+    hideWelcome();
+    var div = renderToolCallCard({
+      id: info.request_id,
+      name: info.name,
+      args: info.args,
+      danger: info.danger_level,
+      running: true,
+    });
     if (messagesEl) messagesEl.appendChild(div);
     scrollToBottom();
   }
@@ -697,6 +775,17 @@
     if (status) {
       status.className = "tc-status " + (success ? "tc-done" : "tc-error");
       status.textContent = success ? "\u2705 " + t("tc_done") : "\u274C " + (result || t("tc_error"));
+    }
+    // 实时那一轮也要能看到结果正文，别只留一句状态
+    var text = String(result || "");
+    if (text && !el.querySelector(".tc-result")) {
+      if (text.length > 400) text = text.substring(0, 400) + "…";
+      var pre = document.createElement("pre");
+      pre.className = "tc-result";
+      pre.textContent = text;
+      var args = el.querySelector(".tc-args");
+      if (args && args.parentNode) args.parentNode.insertBefore(pre, args.nextSibling);
+      else el.appendChild(pre);
     }
   }
 
@@ -785,7 +874,16 @@
         return (item.currency ? item.currency + " " : "") + item.balance;
       }).join(" / ");
     } else {
-      el.textContent = result.error || t("balance_unavailable");
+      // 后端给的是英文排障文案，不能直接显示在中文界面上。
+      // 按 error_code 取本地化文案，原始英文塞进 title（hover 能看细节）。
+      var code = result.error_code;
+      var key = "balance_unavailable";
+      if (code === "no_endpoint") key = "balance_no_endpoint";
+      else if (code === "unsupported") key = "balance_unsupported";
+      else if (code === "no_field") key = "balance_no_field";
+      else if (code === "no_key") key = "balance_no_key";
+      el.textContent = t(key);
+      el.title = result.error || "";
     }
   };
 
@@ -822,86 +920,25 @@
     }
   };
 
-  // 历史里的 tool_call 必须显示出来。
+  // 历史里的 tool_call 走和实时完全相同的卡片（renderToolCallCard）。
   //
-  // 数据一直都在：core.py 往 history 里写的是
+  // 数据一直在：core.py 往 history 里写的是
   //   {"role":"assistant","content":"","tool_calls":[...]}
   //   {"role":"tool","tool_call_id":"...","content":"执行结果"}
-  // 之前只渲染 role=user / role=assistant+content，于是：
-  //   - 纯工具轮次的 assistant 因为 content 为空被跳过；
-  //   - role=tool 的结果整条被丢掉。
-  // 用户看到的就是"历史里工具调用凭空消失"。
+  // 之前只渲染 role=user / role=assistant+content，工具那一轮像凭空消失。
   function renderToolCallHistory(calls, resultsById) {
-    var wrap = document.createElement("div");
-    wrap.className = "tc-history";
-    var head = document.createElement("div");
-    head.className = "tc-history-head";
-    var icon = document.createElement("span");
-    icon.textContent = "\uD83D\uDD27";
-    head.appendChild(icon);
-
-    var names = [];
-    (calls || []).forEach(function (tc) {
-      var fn = (tc && tc["function"]) || {};
-      names.push(fn.name || "tool");
-    });
-    var nameEl = document.createElement("span");
-    nameEl.className = "tc-history-name";
-    nameEl.textContent = names.join(" \u00B7 ") || "tool";
-    head.appendChild(nameEl);
-
-    var toggle = document.createElement("span");
-    toggle.className = "tc-history-toggle";
-    toggle.textContent = t("tc_history_expand");
-    head.appendChild(toggle);
-
-    var body = document.createElement("div");
-    body.style.display = "none";
-
     (calls || []).forEach(function (tc) {
       var fn = (tc && tc["function"]) || {};
       var callId = tc && tc.id;
-      var item = document.createElement("details");
-      var summary = document.createElement("summary");
-      summary.textContent = (fn.name || "tool");
-      item.appendChild(summary);
-
-      var argsLabel = document.createElement("div");
-      argsLabel.className = "tc-status";
-      argsLabel.textContent = t("tc_history_args");
-      item.appendChild(argsLabel);
-
-      var pre = document.createElement("pre");
-      var raw = fn.arguments;
-      if (typeof raw === "string") {
-        try { raw = JSON.parse(raw); } catch (e) { /* 原样显示 */ }
-      }
-      try { pre.textContent = JSON.stringify(raw, null, 2); }
-      catch (e) { pre.textContent = String(raw); }
-      item.appendChild(pre);
-
-      var res = resultsById[callId];
-      if (res !== undefined) {
-        var resLabel = document.createElement("div");
-        resLabel.className = "tc-status";
-        resLabel.textContent = t("tc_history_result");
-        item.appendChild(resLabel);
-        var resPre = document.createElement("pre");
-        resPre.textContent = String(res).substring(0, 4000);
-        item.appendChild(resPre);
-      }
-      body.appendChild(item);
+      var card = renderToolCallCard({
+        id: callId || ("hist-" + Math.random().toString(36).slice(2, 8)),
+        name: fn.name,
+        args: fn.arguments,
+        danger: null,
+        result: resultsById[callId],
+      });
+      if (messagesEl) messagesEl.appendChild(card);
     });
-
-    head.addEventListener("click", function () {
-      var open = body.style.display !== "none";
-      body.style.display = open ? "none" : "";
-      toggle.textContent = open ? t("tc_history_expand") : t("tc_history_collapse");
-    });
-
-    wrap.appendChild(head);
-    wrap.appendChild(body);
-    if (messagesEl) messagesEl.appendChild(wrap);
   }
 
   window._onLoadConversationResult = function(result) {
@@ -1035,8 +1072,9 @@
   function stopChat() {
     var btn = document.getElementById("stop-btn");
     if (btn) {
+      // 按钮里现在是 SVG（圆 + 方块），不能改 textContent —— 一改图形就没了。
       btn.disabled = true;
-      btn.textContent = t("stopping");
+      btn.classList.add("stopping");
     }
     postAPI("/api/stop", { by: "local" }).then(function (res) {
       if (!res.ok) {
@@ -1055,15 +1093,49 @@
     isLoading = state;
     sendBtn.disabled = state;
     if (stopBtn) {
+      // 两个按钮**互斥**：AI 跑着时只有停止，空闲时只有发送。
+      // 同时出现两个圆按钮会让人不知道该点哪个。
       stopBtn.style.display = state ? "inline-flex" : "none";
       stopBtn.disabled = false;
-      stopBtn.textContent = t("stop");
+      stopBtn.classList.remove("stopping");
+    }
+    sendBtn.style.display = state ? "none" : "flex";
+    var composer = document.querySelector(".composer");
+    if (composer) composer.classList.toggle("is-running", state);
+  }
+
+  // 把排队里的下一条发出去（本轮结束时调用）
+  function flushQueue() {
+    if (isLoading || !pendingQueue.length) return;
+    var next = pendingQueue.shift();
+    renderQueueHint();
+    sendMessage(next);
+  }
+
+  function renderQueueHint() {
+    var hint = $("queue-hint");
+    if (!hint) return;
+    if (pendingQueue.length) {
+      hint.hidden = false;
+      hint.textContent = t("queue_pending").replace("{n}", pendingQueue.length);
+    } else {
+      hint.hidden = true;
+      hint.textContent = "";
     }
   }
 
-  function sendMessage() {
-    var text = userInput.value.trim();
-    if (!text || isLoading) return;
+  function sendMessage(textOverride) {
+    var text = (typeof textOverride === "string" ? textOverride : userInput.value).trim();
+    if (!text) return;
+    // AI 正在跑：不打断它，先排队，本轮结束立刻发
+    if (isLoading) {
+      pendingQueue.push(text);
+      userInput.value = "";
+      autoResize();
+      sendBtn.disabled = true;
+      renderQueueHint();
+      return;
+    }
 
     appendMessage("user", text);
     userInput.value = "";
@@ -1112,6 +1184,8 @@
       window._onChatDelta = null;
       window._onChatStopped = null;
       loadConversations();
+      // 本轮结束了：AI 工作时排队的消息现在自动发出去
+      flushQueue();
     };
 
     postAPI("/api/chat", {
@@ -1214,7 +1288,6 @@
         var mtVal = cfg.max_tokens;
         $("cfg-max-tokens").value = (mtVal && mtVal > 0) ? mtVal : "";
       }
-      if ($("cfg-max-tool-rounds")) $("cfg-max-tool-rounds").value = cfg.max_tool_rounds || 100;
       setContextWindowInput(cfg.context_window || cfg.context_window_resolved || 200000);
       if ($("cfg-approval-mode") && cfg.approval_mode) $("cfg-approval-mode").value = cfg.approval_mode;
     });
@@ -1360,8 +1433,6 @@
         cfg.max_tokens = (isNaN(parsed) || parsed <= 0) ? 0 : parsed;
       }
     }
-    var mr = $("cfg-max-tool-rounds");
-    if (mr && mr.value !== "") cfg.max_tool_rounds = Math.max(1, Math.min(1000, parseInt(mr.value, 10) || 100));
     var cw = $("cfg-context-window");
     if (cw && cw.value !== "") {
       var parsedContext = readContextWindowInput();
@@ -1477,6 +1548,16 @@
     if (e.key === "Escape") {
       if (thinkingMenu) thinkingMenu.hidden = true;
       if (approvalMenu) approvalMenu.hidden = true;
+      // 连按两次 Esc = 停止 AI。
+      // 为什么是两次：一次 Esc 在本应用里有"关菜单"的语义，
+      // 直接一次就停会把用户吓到（也会误停）。
+      var now = Date.now();
+      if (now - lastEscapeAt < 600 && isLoading) {
+        lastEscapeAt = 0;
+        stopChat();
+      } else {
+        lastEscapeAt = now;
+      }
     }
   });
 
@@ -1586,12 +1667,12 @@
     var running = !!st.running;
     if (!running) { el.textContent = ""; return; }
     if (st.proxy_active) {
-      el.textContent = "\uD83D\uDD01 代理 " + st.proxy_active;
-      el.title = "经系统代理连接中继";
+      el.textContent = t("relay_via_proxy") + " " + st.proxy_active;
+      el.title = t("relay_via_proxy");
       el.className = "relay-transport via-proxy";
     } else {
-      el.textContent = "\u26A1 直连";
-      el.title = "没检测到系统代理，正在直连中继";
+      el.textContent = t("relay_direct");
+      el.title = t("relay_direct");
       el.className = "relay-transport direct";
     }
   }
@@ -1614,14 +1695,11 @@
     [addApp, addObs].forEach(function (btn) {
       if (!btn) return;
       btn.disabled = !connected;
-      btn.title = connected ? "" : "先开启远程互联并连上中继";
+      btn.title = connected ? "" : t("relay_pair_guard");
     });
     if (box) {
       box.hidden = connected;
-      if (!connected) {
-        box.textContent = "先点上面的「开启远程互联」，等状态变成「已连接」，"
-          + "再添加设备。中继没连上时生成的配对码是死的。";
-      }
+      if (!connected) box.textContent = t("relay_pair_guard");
     }
   }
 

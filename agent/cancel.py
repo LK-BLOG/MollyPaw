@@ -84,17 +84,46 @@ class use_token:
 
 
 class CancelToken:
-    """可共享的取消信号。"""
+    """可共享的取消信号。
 
-    __slots__ = ("_event", "_reason", "_lock", "_children")
+    除了"查标志"，还支持注册**取消回调**：给那种阻塞在系统调用里、
+    自己没机会检查标志的地方用（典型例子是 requests 的 iter_lines ——
+    模型不吐字时会一直阻塞，等到读超时才醒；只有从外面 close 掉连接
+    才能立刻打断）。
+    """
+
+    __slots__ = ("_event", "_reason", "_lock", "_children", "_callbacks")
 
     def __init__(self, parent=None):
         self._event = threading.Event()
         self._reason = ""
         self._lock = threading.RLock()
         self._children = []
+        self._callbacks = []
         if parent is not None:
             parent._register_child(self)
+
+    # -- 取消回调 ----------------------------------------------------------
+
+    def on_cancel(self, fn):
+        """注册取消回调，返回可用于注销的句柄。
+
+        已经取消时立刻执行一次（幂等调用者自己负责）。回调里抛异常不影响别人。
+        """
+        with self._lock:
+            already = self._event.is_set()
+            if not already:
+                self._callbacks.append(fn)
+        if already:
+            _safe_call(fn)
+        return fn
+
+    def remove_cancel_callback(self, fn):
+        with self._lock:
+            try:
+                self._callbacks.remove(fn)
+            except ValueError:
+                pass
 
     # -- 父级联 ------------------------------------------------------------
 
@@ -120,6 +149,11 @@ class CancelToken:
             self._event.set()
             children = list(self._children)
             self._children.clear()
+            callbacks = list(self._callbacks)
+            self._callbacks.clear()
+        # 回调在锁外执行：它们可能会去 close socket / 杀进程，不能持锁
+        for fn in callbacks:
+            _safe_call(fn)
         for child in children:
             child.cancel(reason)
         return True
@@ -144,6 +178,18 @@ class CancelToken:
         raise NotImplementedError(
             "CancelToken is one-way by design; create a new token instead."
         )
+
+
+def _safe_call(fn):
+    """跑一个取消回调，任何异常都吞掉。
+
+    回调是用来"尽力打断"的（关 socket、杀进程）：它失败不该影响
+    取消本身的结果，更不该把异常抛回 UI 线程。
+    """
+    try:
+        fn()
+    except Exception:
+        pass
 
 
 def kill_process_tree(pid, timeout=3.0):

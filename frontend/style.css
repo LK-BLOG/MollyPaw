@@ -312,15 +312,16 @@ body {
 }
 #user-input::placeholder { color: var(--tan); }
 
-.send-btn {
-  width: auto;
-  min-width: 58px;
-  height: 36px;
-  padding: 0 14px;
+/* 发送 / 停止：都是一个圆，里面换个图形。
+   发送 = 圆 + 向上箭头；停止 = 圆 + 圆角方块。没有文字，靠 title 提示。 */
+.send-btn,
+.stop-btn {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
   border: none;
-  border-radius: 9px;
-  font-size: 13px;
-  font-weight: 600;
+  border-radius: 50%;
   background: var(--paw-orange);
   color: var(--pure-white);
   cursor: pointer;
@@ -328,40 +329,85 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: opacity 0.15s, transform 0.1s, background 0.15s;
 }
-.send-btn:disabled { opacity: 0.35; cursor: default; }
-.send-btn:not(:disabled):hover { opacity: 0.9; }
-.send-btn:not(:disabled):active { transform: scale(0.93); }
+
+.send-btn:disabled { opacity: 0.32; cursor: default; }
+.send-btn:not(:disabled):hover { opacity: 0.92; }
+.send-btn:not(:disabled):active { transform: scale(0.92); }
 
 /* 停止按钮：只在 agent 跑着的时候出现 */
 .stop-btn {
-  height: 36px;
-  padding: 0 14px;
   margin-right: 8px;
-  border: 1.5px solid var(--deep-brown);
-  border-radius: 9px;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  background: transparent;
-  color: var(--deep-brown);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  background: var(--deep-brown);
 }
-.stop-btn:hover:not(:disabled) { background: rgba(107, 66, 38, 0.08); }
-.stop-btn:active:not(:disabled) { transform: scale(0.95); }
+
+.stop-btn:hover:not(:disabled) { background: #56341D; }
+.stop-btn:active:not(:disabled) { transform: scale(0.93); }
 .stop-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* 两个按钮里的 svg 都跟着按钮文字色走 */
+.send-btn svg,
+.stop-btn svg { display: block; }
 
 .input-hint {
   text-align: center;
   font-size: 11px;
   color: var(--tan);
   margin-top: 8px;
+}
+
+/* ---- 键位提示 / 排队提示 ---- */
+.kbd-hint-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--tan);
+}
+
+.kbd-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: .82;
+}
+
+.kbd-hint kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  border: 1px solid var(--tan);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--warm-white, #F5EDE3);
+  color: var(--deep-brown);
+  font-family: inherit;
+  font-size: 10.5px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.queue-hint {
+  color: var(--paw-orange);
+  font-weight: 600;
+}
+
+/* 停止中：方块 -> 转圈。
+   转圈是"我收到了你的点击、正在打断"的唯一信号，不然按钮看着像没反应。 */
+.stop-btn .icon-busy { display: none; }
+.stop-btn.stopping { cursor: default; }
+.stop-btn.stopping .icon-stop { display: none; }
+.stop-btn.stopping .icon-busy {
+  display: block;
+  animation: mollypaw-spin .75s linear infinite;
+}
+
+@keyframes mollypaw-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ---- Settings Modal ---- */
@@ -571,6 +617,34 @@ body {
   display: none;
 }
 .tool-call-indicator.expanded .tc-args {
+  display: block;
+}
+
+.tc-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--light-brown);
+  opacity: .75;
+}
+
+.tool-call-indicator .tc-result {
+  margin: 4px 0;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, .66);
+  border: 1px solid rgba(107, 66, 38, .12);
+  border-radius: 6px;
+  font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--deep-brown);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+  display: none;
+}
+
+.tool-call-indicator.expanded .tc-result {
   display: block;
 }
 
@@ -1738,6 +1812,193 @@ body {
 
 .update-progress-actions { margin-top: 10px; }
 
+/* ---------- 自动更新 ---------- */
+
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(58, 42, 26, .45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+  padding: 20px;
+}
+
+.update-modal {
+  width: min(560px, 100%);
+  max-height: min(76vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: #FFF8F0;
+  border: 1px solid rgba(166, 123, 91, .32);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(107, 66, 38, .26);
+  overflow: hidden;
+}
+
+.update-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 20px 6px;
+}
+
+.update-header h3 {
+  margin: 0;
+  font-size: 17px;
+  color: #6B4226;
+}
+
+.update-icon { font-size: 20px; }
+
+.update-versions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px 12px;
+  font-size: 14px;
+  color: #8B5E3C;
+}
+
+.update-from { opacity: .7; }
+.update-arrow { color: #D4823A; font-weight: 700; }
+.update-to { color: #D4823A; font-weight: 700; }
+
+.update-notes-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px;
+}
+
+.update-notes-label {
+  font-size: 12px;
+  letter-spacing: .04em;
+  color: #A67B5B;
+  margin-bottom: 6px;
+}
+
+.update-notes {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  background: #F5EDE3;
+  border: 1px solid rgba(166, 123, 91, .32);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.62;
+  color: #6B4226;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-notes h1, .update-notes h2, .update-notes h3 {
+  font-size: 14px;
+  margin: 12px 0 6px;
+  color: #6B4226;
+}
+
+.update-notes ul { margin: 6px 0; padding-left: 20px; }
+.update-notes li { margin: 3px 0; }
+.update-notes code {
+  background: #F5EDE3;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 12px;
+}
+
+.update-error {
+  margin: 10px 20px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #FFF8F0;
+  border: 1px solid rgba(107, 66, 38, .22);
+  color: #A94442;
+  font-size: 13px;
+}
+
+.update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 20px 18px;
+}
+
+.update-actions button {
+  min-width: 96px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.update-actions .btn-approve,
+.update-progress-actions .btn-approve {
+  background: #D4823A;
+  color: #3A2A1A;
+  font-weight: 600;
+}
+
+.update-actions .btn-reject {
+  background: transparent;
+  border-color: #D2B48C;
+  color: #8B5E3C;
+}
+
+.update-progress-actions .btn-small {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+/* 左下角固定进度条 */
+.update-progress {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  width: min(320px, calc(100vw - 36px));
+  background: #FFF8F0;
+  border: 1px solid rgba(166, 123, 91, .32);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(107, 66, 38, .2);
+  padding: 12px 14px;
+  z-index: 2900;
+}
+
+.update-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #6B4226;
+  margin-bottom: 8px;
+}
+
+#update-progress-pct { color: #D4823A; font-weight: 700; }
+
+.update-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #F5EDE3;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #D4823A, #A67B5B);
+  transition: width .2s ease;
+}
+
+.update-progress-actions { margin-top: 10px; }
+
 /* 历史里的工具调用卡片 */
 .tc-history {
   margin: 10px 0 10px 2px;
@@ -1772,3 +2033,35 @@ body {
   max-height: 240px;
   overflow: auto;
 }
+
+
+/* 通道标记：不用 emoji，改用品牌色小圆点 + 文字
+   （BRAND.md：不要过度装饰） */
+.relay-transport {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--light-brown);
+  margin-left: 8px;
+}
+
+.relay-transport::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tan, #D2B48C);
+}
+
+.relay-transport.via-proxy::before { background: var(--orange, #D4823A); }
+.relay-transport.direct::before { background: var(--light-brown, #A67B5B); }
+
+.relay-pair-guard {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--light-brown, #A67B5B);
+}
+
+.update-header h3 { letter-spacing: .01em; }

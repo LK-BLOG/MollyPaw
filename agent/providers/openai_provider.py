@@ -188,20 +188,29 @@ class OpenAIProvider(BaseProvider):
         return result
 
     def get_balance(self, balance_path="", balance_parser="", balance_base_url=""):
+        # 每种失败都给一个 error_code：前端按码取本地化文案，
+        # 不要直接把英文塞在界面上（切到中文界面会冒出一句英文）。
         if not self.api_key:
-            return {"ok": False, "supported": False, "error": "API key not configured."}
+            return {"ok": False, "supported": False,
+                    "error": "API key not configured.", "error_code": "no_key"}
         if not balance_path:
-            return {"ok": True, "supported": False, "error": "Provider has no balance endpoint."}
+            return {"ok": True, "supported": False,
+                    "error": "Provider has no balance endpoint.",
+                    "error_code": "no_endpoint"}
         base = (balance_base_url or self.base_url).rstrip("/")
         url = balance_path if str(balance_path).startswith(("http://", "https://")) else f"{base}/{str(balance_path).lstrip('/')}"
         response = requests.get(url, headers=self._headers(), timeout=15)
         if response.status_code in (404, 405):
-            return {"ok": True, "supported": False, "error": "Provider does not support balance queries."}
+            return {"ok": True, "supported": False,
+                    "error": "Provider does not support balance queries.",
+                    "error_code": "unsupported"}
         response.raise_for_status()
         data = response.json()
         parsed = self._parse_balance(data, balance_parser)
         if parsed is None:
-            return {"ok": False, "supported": True, "error": "Balance response has no recognized balance field."}
+            return {"ok": False, "supported": True,
+                    "error": "Balance response has no recognized balance field.",
+                    "error_code": "no_field"}
         return parsed
 
     @staticmethod
@@ -258,7 +267,8 @@ class OpenAIProvider(BaseProvider):
         return models
 
     def _post(self, path, payload):
-        response = requests.post(self._url(path), headers=self._headers(), json=payload, timeout=100000)
+        response = requests.post(self._url(path), headers=self._headers(), json=payload,
+                                 timeout=(30, 180))
         response.raise_for_status()
         return response
 
@@ -334,9 +344,14 @@ class OpenAIProvider(BaseProvider):
                 headers=self._headers(),
                 json=payload,
                 stream=True,
-                timeout=(30, 300),  # (连接, 读取间隔)
+                # 读间隔 30 秒：模型不吐字时不该占着线程五分钟。
+                # 真正的"秒停"靠下面的 reset_cancel 回调关连接，不靠超时。
+                timeout=(30, 30),
             )
             response.raise_for_status()
+            # 请求还没开始读就被取消（用户点得很快）：别读完整个流才发现
+            cancel.raise_if_cancelled()
+            cancel.on_cancel(response.close)
 
             for raw_line in response.iter_lines(decode_unicode=False):
                 # 每读一行都检查取消 —— 这是"停止"能秒响应的关键
@@ -413,6 +428,13 @@ class OpenAIProvider(BaseProvider):
                 except Exception:
                     pass
             raise
+        except Exception as exc:
+            # 取消回调 close() 掉连接后，iter_lines 抛的异常长得跟网络错误
+            # 一模一样。这里必须按「是否已取消」判定，否则用户点了停止，
+            # 界面上却显示成「请求失败」。
+            if cancel.cancelled:
+                raise CancelledError("cancelled while streaming") from exc
+            raise
         finally:
             if response is not None:
                 try:
@@ -484,9 +506,11 @@ class OpenAIProvider(BaseProvider):
                 headers=self._headers(),
                 json=payload,
                 stream=True,
-                timeout=(30, 300),
+                timeout=(30, 30),
             )
             response.raise_for_status()
+            cancel.raise_if_cancelled()
+            cancel.on_cancel(response.close)
 
             for raw_line in response.iter_lines(decode_unicode=False):
                 cancel.raise_if_cancelled()
@@ -557,6 +581,11 @@ class OpenAIProvider(BaseProvider):
                     response.close()
                 except Exception:
                     pass
+            raise
+        except Exception as exc:
+            # 同 chat/completions 分支：close() 造成的读异常要按取消处理
+            if cancel.cancelled:
+                raise CancelledError("cancelled while streaming") from exc
             raise
         finally:
             if response is not None:

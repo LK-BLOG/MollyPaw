@@ -270,6 +270,14 @@ class MollyPawAPI:
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
 
+    def _lang(self):
+        """界面语言（config.language）。拿不到就按中文。"""
+        try:
+            agent = self.service._ensure_agent()
+            return agent.config.get("language") or "zh"
+        except Exception:
+            return "zh"
+
     def relay_pin(self, payload_json="{}"):
         """生成配对码（一键导入）。可带 role=app|observer。
 
@@ -280,22 +288,23 @@ class MollyPawAPI:
         二维码，用户拿去扫，手机一直等不到响应 —— 界面在骗人。
         """
         try:
+            from agent.i18n import msg as _msg
+
+            lang = self._lang()
             mgr = self._ensure_relay()
             st = mgr.status()
             if not st.get("running"):
                 return json.dumps({
                     "ok": False,
                     "need_start": True,
-                    "error": "远程互联还没开启。先点「开启远程互联」，"
-                             "等状态变成「已连接」再添加设备。",
+                    "error": _msg("relay_not_running", lang),
                 }, ensure_ascii=False)
             if not st.get("connected"):
                 return json.dumps({
                     "ok": False,
                     "need_start": True,
-                    "error": "中继还没连上（当前状态：%s）。"
-                             "网络不稳时它会自己重试，等显示「已连接」再添加设备。"
-                             % (st.get("state") or "未知"),
+                    "error": _msg("relay_not_connected", lang,
+                                  state=st.get("state") or "?"),
                 }, ensure_ascii=False)
             try:
                 data = _load_json_payload(payload_json)

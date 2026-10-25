@@ -33,7 +33,7 @@ SYSTEM_PROMPT = (
     "记忆应简洁有用，避免冗余。"
 )
 
-MAX_TOOL_ROUNDS = 100
+MAX_TOOL_ROUNDS = 100000
 
 
 class AgentCore:
@@ -269,10 +269,14 @@ class AgentCore:
         tools = self.tool_registry.get_schemas()
         round_usage = {}
         round_cost = None
-        try:
-            max_rounds = max(1, min(1000, int(self.config.get("max_tool_rounds", MAX_TOOL_ROUNDS) or MAX_TOOL_ROUNDS)))
-        except (TypeError, ValueError):
-            max_rounds = MAX_TOOL_ROUNDS
+        tools = self.tool_registry.get_schemas()
+        round_usage = {}
+        round_cost = None
+        # 工具轮数**不设上限**：改这一条是因为实际用下来"干到一半被轮数卡住"
+        # 比"跑飞烧钱"更常见（用户原话：限制了活干不完）。
+        # 退出方式只有三种：模型不再调工具 / 用户点停止（cancel）/ 出异常。
+        # 唯一保留的是防死循环的硬上限，数值大到正常任务不可能碰到。
+        max_rounds = MAX_TOOL_ROUNDS
 
         use_stream = bool(on_delta) and hasattr(self.provider, "stream_chat")
 

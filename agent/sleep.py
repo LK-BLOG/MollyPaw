@@ -290,7 +290,7 @@ class SleepCycle:
         executed_any = False
         registry, schemas = self._sleep_registry(allowed_tools)
         messages = [{"role": "system", "content": prompt}]
-        while self._llm_calls < self._sleep_config["max_llm_calls"]:
+        while True:
             if self._interrupt.is_set():
                 return False
             result = self.provider.chat(messages, tools=schemas)
