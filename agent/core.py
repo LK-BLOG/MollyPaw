@@ -33,7 +33,9 @@ SYSTEM_PROMPT = (
     "记忆应简洁有用，避免冗余。"
 )
 
-MAX_TOOL_ROUNDS = 100000
+# 工具轮数不设上限（真不设，不是给个很大的数字假装不设）。
+# 这个常量已经没有任何地方使用，保留只是为了不破坏外部 import。
+MAX_TOOL_ROUNDS = None
 
 
 class AgentCore:
@@ -59,7 +61,6 @@ class AgentCore:
         "context_reserve": 4096,
         "thinking_level": "none",
         "balance_path": "",
-        "max_tool_rounds": 100,
         "sleep": {
             "mode": "off",
             "tasks": ["memory", "review", "dream"],
@@ -269,14 +270,10 @@ class AgentCore:
         tools = self.tool_registry.get_schemas()
         round_usage = {}
         round_cost = None
-        tools = self.tool_registry.get_schemas()
-        round_usage = {}
-        round_cost = None
-        # 工具轮数**不设上限**：改这一条是因为实际用下来"干到一半被轮数卡住"
-        # 比"跑飞烧钱"更常见（用户原话：限制了活干不完）。
-        # 退出方式只有三种：模型不再调工具 / 用户点停止（cancel）/ 出异常。
-        # 唯一保留的是防死循环的硬上限，数值大到正常任务不可能碰到。
-        max_rounds = MAX_TOOL_ROUNDS
+        # 工具轮数**完全不限**。退出只有三种方式：
+        #   模型不再调工具 / 用户点停止（cancel）/ 抛异常。
+        # 早先有 max_tool_rounds（默认 100），实际用下来「干到一半被轮数卡住」
+        # 比「跑飞烧钱」常见得多，所以这个限制被彻底删掉，不留假上限。
 
         use_stream = bool(on_delta) and hasattr(self.provider, "stream_chat")
 
@@ -288,11 +285,14 @@ class AgentCore:
                 pass
 
         try:
-            for round_index in range(max_rounds):
+            # 真·无限循环：没有轮数上限，退出只靠 return / cancel / 异常。
+            round_index = 0
+            while True:
+                round_index += 1
                 cancel.raise_if_cancelled()
                 if on_round:
                     try:
-                        on_round({"round": round_index + 1})
+                        on_round({"round": round_index})
                     except Exception:
                         pass
 
@@ -417,16 +417,9 @@ class AgentCore:
                 self.save_conversation()
                 return {"response": text, "usage": round_usage, "cost": round_cost}
 
-            text = self._request_final_text(self.history)
-            if not text:
-                text = "(MollyPaw used too many tool calls and stopped.)"
-            self.history.append({"role": "assistant", "content": text})
-            try:
-                self._auto_title_if_needed()
-            except Exception:
-                pass
-            self.save_conversation()
-            return {"response": text, "usage": round_usage, "cost": round_cost}
+            # 这里原来还有一段「用光工具轮数后的兜底回复」。
+            # 轮数上限已经删了（while True），这段永远走不到，直接去掉 ——
+            # 留着会让人以为还有上限。
 
         except CancelledError:
             # 回滚本轮所有痕迹：半截 assistant / tool 记录一律不要，
