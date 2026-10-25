@@ -353,15 +353,21 @@ class MollyPawAPI:
 
     def update_check(self):
         """查有没有新版本（含更新说明，给弹窗用）。"""
+        from agent.i18n import msg as _msg
+
         try:
             from agent import updater
         except Exception as exc:  # noqa: BLE001
-            return json.dumps({"ok": False, "error": "更新模块不可用：%s" % exc},
-                              ensure_ascii=False)
+            return json.dumps(
+                {"ok": False,
+                 "error": _msg("update_module_missing", self._lang(), error=exc)},
+                ensure_ascii=False)
         return json.dumps(updater.check(), ensure_ascii=False)
 
     def update_download(self, payload_json="{}"):
         """后台下载新版本，进度通过事件队列推给前端。"""
+        from agent.i18n import msg as _msg
+
         try:
             from agent import updater
             data = _load_json_payload(payload_json)
@@ -373,8 +379,9 @@ class MollyPawAPI:
                 url = asset.get("url") or ""
                 name = asset.get("name") or name
             if not url:
-                return json.dumps({"ok": False, "error": "没有可下载的安装包地址"},
-                                  ensure_ascii=False)
+                return json.dumps(
+                    {"ok": False, "error": _msg("update_no_asset", self._lang())},
+                    ensure_ascii=False)
 
             def on_progress(pct, done, total):
                 self._queue_event("_onUpdateProgress", {
