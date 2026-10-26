@@ -26,6 +26,11 @@ from agent.tools.registry import ToolRegistry
 
 WINDOWS = os.name == "nt"
 
+# exec_command 默认用 powershell（产品只发 Windows）；CI 在 Linux 上跑，
+# 没有 powershell，所以测试里显式选 shell：Windows 用 powershell，
+# 其它平台用 cmd（在 POSIX 上就是 sh -c）。
+SHELL = "powershell" if WINDOWS else "cmd"
+
 
 def _long_cmd(seconds=60):
     """一条会跑很久的命令（跨平台）。"""
@@ -180,7 +185,7 @@ class TestExecCancelHandsOff:
         def _run():
             try:
                 box["result"] = ExecTool().exec_command(
-                    _long_cmd(60), timeout=120, cancel=token)
+                    _long_cmd(60), shell=SHELL, timeout=120, cancel=token)
             except CancelledError as exc:
                 box["cancelled"] = str(exc)
             except Exception as exc:  # noqa: BLE001
@@ -211,7 +216,7 @@ class TestExecCancelHandsOff:
     def test_timeout_hands_off_with_pid(self):
         tool = ExecTool()
         started = time.time()
-        out = tool.exec_command(_long_cmd(60), timeout=1)
+        out = tool.exec_command(_long_cmd(60), shell=SHELL, timeout=1)
         elapsed = time.time() - started
         assert elapsed < 15, "超时没有及时把命令推去后台，还是阻塞住了"
         assert "转入后台" in out or "background" in out
@@ -281,7 +286,7 @@ def _cleanup_bg():
 
 def _swallow(tool, token, box=None):
     try:
-        tool.exec_command(_long_cmd(60), timeout=120, cancel=token)
+        tool.exec_command(_long_cmd(60), shell=SHELL, timeout=120, cancel=token)
     except Exception as exc:  # noqa: BLE001
         if box is not None:
             box["exc"] = repr(exc)
