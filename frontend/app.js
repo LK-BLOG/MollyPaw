@@ -76,6 +76,13 @@
       kbd_hint_insert: "queues a message while AI is working",
       kbd_hint_stop: "Press Esc twice to stop AI",
       queue_pending: "{n} queued — sent when this round ends",
+      bg_processes: "{n} command(s) moved to the background — AI can handle them, or kill them here",
+      bg_kill_all: "Kill all",
+      sleep_idle: "Start tidying after being idle for (minutes)",
+      sleep_idle_hint: "Nothing happens unless you have been idle that long — using the app keeps it awake.",
+      sleep_applied: "Applied",
+      sleep_save_failed: "Failed to save",
+      sleep_load_failed: "Failed to load",
       relay_via_proxy: "Proxy",
       relay_direct: "Direct",
       relay_pair_guard: "Turn on remote access first and wait until it says Connected, then add a device. A pairing code generated while the relay is offline is dead.",
@@ -260,6 +267,13 @@
       kbd_hint_insert: "AI 工作时插入消息",
       kbd_hint_stop: "连按两次 Esc 停止 AI",
       queue_pending: "已排队 {n} 条，本轮结束自动发送",
+      bg_processes: "有 {n} 个命令转到了后台继续跑，AI 可以处理，也可以在这里终止",
+      bg_kill_all: "全部终止",
+      sleep_idle: "空闲多少分钟后整理",
+      sleep_idle_hint: "这段时间里没有任何操作才会开始，你在用就不会整理。",
+      sleep_applied: "已生效",
+      sleep_save_failed: "保存失败",
+      sleep_load_failed: "读取失败",
       relay_via_proxy: "代理",
       relay_direct: "直连",
       relay_pair_guard: "先点上面的「开启远程互联」，等状态变成「已连接」，再添加设备。中继没连上时生成的配对码是死的。",
@@ -1085,6 +1099,46 @@
   }
   window.stopChat = stopChat;
 
+  // ---- 后台进程提示 ----
+  // 点停止不等于杀掉命令：命令被转进后台继续跑（agent/process_manager.py）。
+  // 用户得知道这件事，否则会以为"没停掉"。AI 下次说话时也能看到这些进程。
+  function refreshBgNotice() {
+    var box = document.getElementById("bg-notice");
+    var text = document.getElementById("bg-notice-text");
+    if (!box || !text) return;
+    getAPI("/api/processes").then(function (res) {
+      if (!res || !res.ok) return;
+      var alive = (res.items || []).filter(function (item) { return item.alive; });
+      if (!alive.length) {
+        box.hidden = true;
+        text.textContent = "";
+        return;
+      }
+      box.hidden = false;
+      text.textContent = t("bg_processes").replace("{n}", alive.length);
+    }).catch(function () {});
+  }
+  window.refreshBgNotice = refreshBgNotice;
+
+  (function bindBgNotice() {
+    var kill = document.getElementById("bg-kill");
+    if (kill) {
+      kill.addEventListener("click", function () {
+        kill.disabled = true;
+        postAPI("/api/processes/kill", {}).then(function () {
+          kill.disabled = false;
+          refreshBgNotice();
+        }).catch(function () {
+          kill.disabled = false;
+        });
+      });
+    }
+    // 页面一打开就查一次：上次会话留下的后台进程也要能看到
+    refreshBgNotice();
+    // 后台进程可能自己跑完，定时刷一下，别让提示挂着不消失
+    setInterval(refreshBgNotice, 5000);
+  })();
+
   // ---- Send Message ----
   var stopBtn = document.getElementById("stop-btn");
   if (stopBtn) stopBtn.addEventListener("click", stopChat);
@@ -1154,6 +1208,8 @@
     window._onChatStopped = function () {
       hideTyping();
       showTyping();
+      // 停止请求已生效：稍等一下让 exec 把命令转进后台，再刷新提示
+      setTimeout(refreshBgNotice, 800);
     };
 
     window._onChatResult = function (result) {
@@ -1184,6 +1240,8 @@
       window._onChatDelta = null;
       window._onChatStopped = null;
       loadConversations();
+      // 被停止时命令可能被转到了后台，把提示条刷新出来
+      if (result.cancelled) refreshBgNotice();
       // 本轮结束了：AI 工作时排队的消息现在自动发出去
       flushQueue();
     };
@@ -1302,7 +1360,7 @@
     applyConfig(result.config || {});
   };
 
-  var currentSleepSettings = { mode: "off", tasks: ["memory", "review", "dream"], max_llm_calls: 100 };
+  var currentSleepSettings = { mode: "off", tasks: ["memory", "review", "dream"], idle_minutes: 10 };
 
   function setSleepStatus(text, isError) {
     var el = $("sleep-status-text");
@@ -1311,12 +1369,21 @@
     el.className = isError ? "sleep-status err" : "sleep-status ok";
   }
 
+  // 后端会 clamp（<0.5 分钟没意义，0/负数当没设），这里做同一套规则，
+  // 免得界面显示一个后端根本不会用的数字。
+  function clampIdleMinutes(value) {
+    var minutes = parseFloat(value);
+    if (!isFinite(minutes) || minutes <= 0) minutes = 10;
+    return Math.max(0.5, Math.round(minutes * 10) / 10);
+  }
+
   function applySleepSettings(settings) {
     currentSleepSettings = Object.assign({}, currentSleepSettings, settings || {});
     var mode = $("cfg-sleep-mode");
     if (mode) mode.value = currentSleepSettings.mode || "off";
-    var maxCalls = $("cfg-sleep-max-calls");
-    if (maxCalls) maxCalls.value = currentSleepSettings.max_llm_calls != null ? currentSleepSettings.max_llm_calls : 100;
+    var idle = $("cfg-sleep-idle");
+    if (idle) idle.value = currentSleepSettings.idle_minutes != null
+      ? currentSleepSettings.idle_minutes : 10;
     var selected = currentSleepSettings.tasks || [];
     document.querySelectorAll("#sleep-task-group input").forEach(function (input) {
       input.checked = selected.indexOf(input.value) >= 0;
@@ -1330,7 +1397,7 @@
   function loadSleepSettings() {
     getAPI("/api/sleep").then(function (result) {
       if (result.ok) applySleepSettings(result.sleep || {});
-      else setSleepStatus(result.error || "读取失败", true);
+      else setSleepStatus(result.error || t("sleep_load_failed"), true);
     }).catch(function (err) { setSleepStatus(String(err), true); });
   }
 
@@ -1338,8 +1405,8 @@
     var settings = Object.assign({}, currentSleepSettings);
     var mode = $("cfg-sleep-mode");
     if (mode) settings.mode = mode.value;
-    var maxCalls = $("cfg-sleep-max-calls");
-    if (maxCalls && maxCalls.value !== "") settings.max_llm_calls = Math.max(1, Math.min(500, parseInt(maxCalls.value, 10) || 100));
+    var idle = $("cfg-sleep-idle");
+    if (idle && idle.value !== "") settings.idle_minutes = clampIdleMinutes(idle.value);
     settings.tasks = [];
     document.querySelectorAll("#sleep-task-group input").forEach(function (input) {
       if (input.checked) settings.tasks.push(input.value);
@@ -1353,9 +1420,10 @@
     function done(result) {
       if (result.ok) {
         currentSleepSettings = Object.assign({}, currentSleepSettings, result.sleep || {});
-        setSleepStatus("已生效");
+        applySleepSettings(currentSleepSettings);
+        setSleepStatus(t("sleep_applied"));
       } else {
-        setSleepStatus(result.error || "保存失败", true);
+        setSleepStatus(result.error || t("sleep_save_failed"), true);
       }
     }
     postAPI("/api/sleep", settings).then(done).catch(function (err) {
@@ -1594,8 +1662,8 @@
 
   var sleepMode = $("cfg-sleep-mode");
   if (sleepMode) sleepMode.addEventListener("change", saveSleepSettings);
-  var sleepMaxCalls = $("cfg-sleep-max-calls");
-  if (sleepMaxCalls) sleepMaxCalls.addEventListener("change", saveSleepSettings);
+  var sleepIdle = $("cfg-sleep-idle");
+  if (sleepIdle) sleepIdle.addEventListener("change", saveSleepSettings);
   document.querySelectorAll("#sleep-task-group input").forEach(function (input) {
     input.addEventListener("change", saveSleepSettings);
   });

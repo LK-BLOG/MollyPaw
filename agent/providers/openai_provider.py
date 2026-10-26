@@ -135,7 +135,7 @@ class OpenAIProvider(BaseProvider):
             return None
         return n if n > 0 else None
 
-    def chat(self, messages, tools=None, max_tokens=None):
+    def chat(self, messages, tools=None, max_tokens=None, cancel=None):
         if not self.api_key:
             raise ValueError("API key not configured. Please set it in Settings.")
         if not self.model:
@@ -150,7 +150,7 @@ class OpenAIProvider(BaseProvider):
             if self.supports_temperature:
                 payload["temperature"] = self.temperature
             self._apply_thinking(payload)
-            data = self._post("/responses", payload).json()
+            data = self._post("/responses", payload, cancel=cancel).json()
             calls = self._extract_tool_calls(data)
             result = {"content": self._extract_text(data), "usage": data.get("usage", {})}
             for key in ("cost", "total_cost"):
@@ -171,7 +171,7 @@ class OpenAIProvider(BaseProvider):
         if tools:
             payload["tools"] = tools
         self._apply_thinking(payload)
-        data = self._post("/chat/completions", payload).json()
+        data = self._post("/chat/completions", payload, cancel=cancel).json()
         message = data["choices"][0]["message"]
         result = {
             "content": message.get("content", ""),
@@ -266,9 +266,41 @@ class OpenAIProvider(BaseProvider):
                 models.append(str(model_id))
         return models
 
-    def _post(self, path, payload):
-        response = requests.post(self._url(path), headers=self._headers(), json=payload,
-                                 timeout=(30, 180))
+    def _post(self, path, payload, cancel=None):
+        """POST 一次。传了 cancel 就能被"外部打断"。
+
+        为什么要 Session：`requests.post` 是模块级函数，请求中间没有句柄
+        可以从别的线程关掉。睡眠整理、长超时这类调用一旦卡住，
+        用户回来了也只能干等到 180 秒读超时 —— 只能靠 close 掉连接来立刻打断。
+        """
+        if cancel is None:
+            response = requests.post(self._url(path), headers=self._headers(), json=payload,
+                                     timeout=(30, 180))
+            response.raise_for_status()
+            return response
+
+        from agent.cancel import CancelledError
+
+        session = requests.Session()
+        cancel.on_cancel(session.close)
+        try:
+            cancel.raise_if_cancelled()
+            response = session.post(self._url(path), headers=self._headers(),
+                                    json=payload, timeout=(30, 180))
+        except CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if cancel.cancelled:
+                # close() 导致的连接中断，不是真的网络错误
+                raise CancelledError("cancelled while waiting for response") from exc
+            raise
+        finally:
+            cancel.remove_cancel_callback(session.close)
+            try:
+                session.close()
+            except Exception:
+                pass
+        cancel.raise_if_cancelled()
         response.raise_for_status()
         return response
 

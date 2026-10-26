@@ -84,6 +84,27 @@ def _load_json_payload(payload, default=None):
     return value
 
 
+def _coerce_idle_minutes(value):
+    """把「空闲多少分钟后整理」规范成 SleepCycle 认可的数值。
+
+    规则跟 agent/sleep.py 的 `_normalize_config` 必须一致，否则会出现
+    「界面显示 30 分钟、后端按 0.5 分钟跑」这种查半天的问题。
+    """
+    try:
+        from agent.sleep import SleepCycle
+    except Exception:  # noqa: BLE001
+        default, floor = 10.0, 0.5
+    else:
+        default, floor = SleepCycle.DEFAULT_IDLE_MINUTES, SleepCycle.MIN_IDLE_MINUTES
+    try:
+        minutes = float(value)
+    except (TypeError, ValueError):
+        return default
+    if minutes <= 0:
+        return default
+    return max(floor, round(minutes, 1))
+
+
 class MollyPawAPI:
     """API exposed to the frontend via pywebview.
 
@@ -364,6 +385,64 @@ class MollyPawAPI:
                 ensure_ascii=False)
         return json.dumps(updater.check(), ensure_ascii=False)
 
+    # -- 后台进程 ----------------------------------------------------------
+
+    def processes(self):
+        """停止之后转进后台的命令。前端据此提示"AI 可以处理"。
+
+        注意 stdout/stderr 只回尾部摘要：这个接口是给 UI 用的，
+        要完整输出请走 process_list 工具（模型侧）。
+        """
+        try:
+            from agent.process_manager import manager as _bg
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "error": str(exc), "items": []},
+                              ensure_ascii=False)
+        items = []
+        try:
+            for entry in _bg().list():
+                entry.refresh_exit()
+                out, err, _ = entry.snapshot(max_lines=10, max_chars=800)
+                items.append({
+                    "pid": entry.pid,
+                    "cmd": entry.cmd,
+                    "alive": entry.alive,
+                    "age_seconds": int(entry.age),
+                    "exit_code": entry.exit_code,
+                    "killed_by": entry.killed_by,
+                    "stdout": out,
+                    "stderr": err,
+                })
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "error": str(exc), "items": []},
+                              ensure_ascii=False)
+        return json.dumps({
+            "ok": True,
+            "count": sum(1 for i in items if i["alive"]),
+            "items": items,
+        }, ensure_ascii=False)
+
+    def processes_kill(self, payload_json="{}"):
+        """前端手动清理后台进程（手机上也能点）。"""
+        try:
+            data = _load_json_payload(payload_json)
+        except Exception:
+            data = {}
+        pid = data.get("pid")
+        try:
+            from agent.process_manager import manager as _bg
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+        mgr = _bg()
+        try:
+            if pid is None:
+                killed = mgr.kill_all(by="user")
+            else:
+                killed = [mgr.kill(int(pid), by="user")]
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+        return json.dumps({"ok": True, "killed": killed}, ensure_ascii=False)
+
     def update_download(self, payload_json="{}"):
         """后台下载新版本，进度通过事件队列推给前端。"""
         from agent.i18n import msg as _msg
@@ -552,11 +631,11 @@ class MollyPawAPI:
             if not isinstance(tasks, list):
                 raise ValueError("Invalid sleep tasks")
             tasks = [task for task in ("memory", "review", "dream") if task in tasks]
-            try:
-                max_llm_calls = max(0, int(data.get("max_llm_calls", 100)))
-            except (TypeError, ValueError):
-                raise ValueError("Invalid max llm calls")
-            sleep = {"mode": mode, "tasks": tasks, "idle_minutes": 0.5, "max_llm_calls": max_llm_calls}
+            # 空闲时间**以前是硬编码 0.5 分钟**，用户填什么都没用 —— 30 秒不动
+            # 就开始跑整理任务，等于后台偷偷烧 token。现在按前端传上来的值走，
+            # 并且跟 SleepCycle 用同一套下限规则。
+            idle_minutes = _coerce_idle_minutes(data.get("idle_minutes"))
+            sleep = {"mode": mode, "tasks": tasks, "idle_minutes": idle_minutes}
             agent = self._ensure_agent()
             agent.save_config({"sleep": sleep})
             if self.sleep_cycle:
@@ -638,7 +717,7 @@ class MollyPawAPI:
             def do_GET(self):
                 try:
                     if self.path == "/state":
-                        self._send_json({"state": api_ref.pet_state})
+                        self._send_json({"state": api_ref.current_pet_state()})
                     elif self.path == "/api/providers":
                         self._send_json({"ok": True, "providers": public_providers()})
                     elif self.path == "/api/events":
@@ -704,6 +783,8 @@ class MollyPawAPI:
                         self._send_json(json.loads(api_ref.version()))
                     elif self.path == "/api/update/check":
                         self._send_json(json.loads(api_ref.update_check()))
+                    elif self.path == "/api/processes":
+                        self._send_json(json.loads(api_ref.processes()))
                     elif self.path == "/api/relay/available":
                         self._send_json({"ok": True, "available": HAS_RELAY,
                                          "error": RELAY_IMPORT_ERROR})
@@ -883,6 +964,9 @@ class MollyPawAPI:
                         self._send_json(json.loads(api_ref.update_download(body or "{}")))
                     elif self.path == "/api/update/apply":
                         self._send_json(json.loads(api_ref.update_apply()))
+                    # -- 后台进程（POST：杀）
+                    elif self.path == "/api/processes/kill":
+                        self._send_json(json.loads(api_ref.processes_kill(body or "{}")))
                     # -- 远程互联（POST：写操作）
                     elif self.path == "/api/relay/start":
                         self._send_json(json.loads(api_ref.relay_start()))
@@ -1021,12 +1105,29 @@ class MollyPawAPI:
 
     # -- Pet state ---------------------------------------------------------
 
+    def current_pet_state(self):
+        """宠物现在是什么状态。
+
+        **必须问 service**，不能读 self.pet_state：睡眠周期是直接改
+        `service.pet_state` 的（避免 set_pet_state → mark_activity → wake
+        的递归），main 这边那份拷贝只在启动时同步过一次 —— 结果就是
+        宠物睡着了前端还是显示"待命"。
+        """
+        service = getattr(self, "service", None)
+        state = getattr(service, "pet_state", None) if service else None
+        return state or self.pet_state
+
     def get_pet_state(self):
-        return json.dumps({"state": self.pet_state}, ensure_ascii=False)
+        return json.dumps({"state": self.current_pet_state()}, ensure_ascii=False)
 
     def set_pet_state(self, state):
         if state in ("idle", "work", "cry", "sleep"):
             self.pet_state = state
+            if getattr(self, "service", None) is not None:
+                try:
+                    self.service.pet_state = state
+                except Exception:
+                    pass
             if state != "sleep":
                 self._mark_activity()
             return json.dumps({"ok": True}, ensure_ascii=False)

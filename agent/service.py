@@ -66,17 +66,13 @@ class _FallbackController:
             self._token = None
 
     def stop(self, by="local"):
-        from agent.tools.exec_tool import ExecTool
-
         with self._lock:
             token = self._token
             if not self._busy or token is None:
                 return False
         token.cancel(f"stopped by {by}")
-        try:
-            ExecTool.kill_all()
-        except Exception:
-            pass
+        # 不硬杀子进程：exec_command 会把在跑的命令转进后台，
+        # 之后由模型用 process_list / process_kill 处理。
         return True
 
     def current_token(self):
@@ -266,7 +262,10 @@ class MollyPawService:
                     self.agent.provider,
                     self.agent.config,
                     lambda state: setattr(self, "pet_state", state),
-                    lambda: self.pet_state == "work",
+                    # 判"忙不忙"要看单飞锁，不能只看 pet_state：
+                    # pet_state 是靠各处手写赋值维护的，漏一处就会让睡眠任务
+                    # 和用户聊天同时跑，两边抢同一个 provider。
+                    lambda: self.busy or self.pet_state == "work",
                 )
                 self.sleep_cycle.start()
             return self.agent

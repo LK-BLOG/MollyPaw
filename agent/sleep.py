@@ -112,13 +112,134 @@ class _SleepFileTool(FileTool):
         return super().write_file(target, content)
 
 
+class SleepExecutor:
+    """跑「提示词 → 模型 → 工具 → 回到模型」这一圈。
+
+    单独拆出来是为了能测：这里最容易出的错是「没有中断能力」和
+    「工具白名单没生效」，两者都不该埋在 400 行的 SleepCycle 里。
+
+    和 AgentCore 的区别：
+      - 没有历史，每次从一条 system 提示词开始（睡眠任务是独立的一次性工作）；
+      - **没有轮数上限**（用户明确要求把睡眠的调用上限也删掉，活才干得完），
+        退出只靠：模型不再调工具 / 被中断 / 抛异常；
+      - 每次模型调用都带 CancelToken，用户一有动作就能立刻掐断。
+    """
+
+    def __init__(self, provider, logger, registry_factory,
+                 is_sensitive, is_safe_write_path):
+        self.provider = provider
+        self.logger = logger
+        self._registry_factory = registry_factory
+        self._is_sensitive = is_sensitive
+        self._is_safe_write_path = is_safe_write_path
+
+    def run(self, prompt, allowed_tools, is_interrupted,
+            register_token=None, write_root=None, write_path=None):
+        from agent.cancel import CancelledError, CancelToken
+
+        registry, schemas = self._registry_factory(allowed_tools)
+        messages = [{"role": "system", "content": prompt}]
+
+        def _publish(token):
+            if register_token:
+                try:
+                    register_token(token)
+                except Exception:
+                    pass
+
+        while True:
+            if is_interrupted():
+                return False
+            token = CancelToken()
+            _publish(token)
+            try:
+                result = self._chat(messages, schemas, token)
+            except CancelledError:
+                return False
+            finally:
+                _publish(None)
+
+            calls = result.get("tool_calls") or []
+            if not calls:
+                return True
+
+            messages.append({
+                "role": "assistant",
+                "content": result.get("content") or "",
+                "tool_calls": calls,
+            })
+            for call in calls:
+                if is_interrupted():
+                    return False
+                fn = call.get("function", {})
+                name = fn.get("name", "")
+                call_id = call.get("id", "")
+                self.logger("工具调用: " + str(name))
+                try:
+                    arguments = json.loads(fn.get("arguments") or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    arguments = {}
+                output = self._invoke(
+                    registry, allowed_tools, name, arguments, write_root, write_path)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": output,
+                })
+
+    def _chat(self, messages, schemas, token):
+        """调一次模型。provider 不支持 cancel 时退回普通调用（老测试桩）。"""
+        try:
+            return self.provider.chat(messages, tools=schemas, cancel=token)
+        except TypeError as exc:
+            if "cancel" not in str(exc):
+                raise
+            token.raise_if_cancelled()
+            return self.provider.chat(messages, tools=schemas)
+
+    def _invoke(self, registry, allowed_tools, name, arguments,
+                write_root, write_path):
+        if name not in allowed_tools:
+            return "Error: tool is not allowed during sleep."
+        if name == "save_memory" and self._is_sensitive(arguments.get("content", "")):
+            return "Error: sensitive content skipped."
+        if name == "write_file":
+            path = str(arguments.get("path") or "")
+            content = str(arguments.get("content") or "")
+            if write_path and os.path.abspath(path) != os.path.abspath(write_path):
+                return "Error: use the exact dream path: " + str(write_path)
+            if write_root and not self._is_safe_write_path(path, write_root):
+                return "Error: sleep may only write dream files under data/dreams."
+            if self._is_sensitive(content):
+                return "Error: sensitive content skipped."
+        return str(registry.execute(name, arguments))
+
+
 class SleepCycle:
-    IDLE_SECONDS = 30
+    """空闲进入「睡眠整理」的后台任务。
+
+    修过的坑（都别再犯）：
+      1. **空闲时间以前是硬编码 30 秒，而且把用户配置直接覆盖掉**。
+         `_normalize_config` 里写死 `idle_minutes = IDLE_SECONDS / 60`，
+         设置里的"空闲分钟数"永远不生效 —— 用户去倒杯水回来，
+         MollyPaw 已经在跑整理任务烧 token 了。现在真读配置。
+      2. **LLM 调用是阻塞的，而且没法打断**。用户在整理过程中回来发消息，
+         得等这次调用彻底结束（最长能卡到读超时）。现在每次调用都带
+         CancelToken，用户一有动作就 close 连接立刻中断。
+      3. **异常会把状态卡死在 sleeping**。整理任务抛异常后 state 停在
+         "sleeping"、宠物保持"睡觉"，monitor 线程也死了 —— 看起来就是
+         "宠物永久睡眠，怎么点都没反应"。现在 finally 里一定复位。
+    """
+
     VALID_MODES = {"off", "display_only", "full"}
     TASK_ORDER = ["memory", "review", "dream"]
     MEMORY_TOOLS = {"save_memory", "search_memory", "list_memories"}
     FILE_TOOLS = {"write_file", "read_file", "list_directory"}
     MEMORY_READ_TOOLS = {"search_memory", "list_memories"}
+
+    # 默认空闲 10 分钟才睡。太短等于用户一走神就被后台任务占着模型。
+    DEFAULT_IDLE_MINUTES = 10.0
+    MIN_IDLE_MINUTES = 0.5
 
     def __init__(self, provider, config, set_pet_state, is_busy, logger=None):
         self.provider = provider
@@ -132,7 +253,7 @@ class SleepCycle:
         self._stop_monitor = threading.Event()
         self._interrupt = threading.Event()
         self._monitor_thread = None
-        self._llm_calls = 0
+        self._active_token = None   # 当前正在跑的 LLM 调用的取消令牌
         self._data_dir = data_dir()
         self._state_path = os.path.join(self._data_dir, "sleep_state.json")
         self._dreams_dir = os.path.join(self._data_dir, "dreams")
@@ -148,16 +269,17 @@ class SleepCycle:
         if not isinstance(tasks, list):
             tasks = self.TASK_ORDER
         tasks = [task for task in self.TASK_ORDER if task in tasks]
-        idle_minutes = self.IDLE_SECONDS / 60
         try:
-            max_llm_calls = int(value.get("max_llm_calls", 100))
+            idle_minutes = float(value.get("idle_minutes", self.DEFAULT_IDLE_MINUTES))
         except (TypeError, ValueError):
-            max_llm_calls = 100
+            idle_minutes = self.DEFAULT_IDLE_MINUTES
+        if idle_minutes <= 0:
+            idle_minutes = self.DEFAULT_IDLE_MINUTES
+        idle_minutes = max(self.MIN_IDLE_MINUTES, idle_minutes)
         return {
             "mode": mode,
             "tasks": tasks,
             "idle_minutes": idle_minutes,
-            "max_llm_calls": max(0, max_llm_calls),
         }
 
     def reload_config(self):
@@ -182,9 +304,23 @@ class SleepCycle:
     def stop(self):
         self._stop_monitor.set()
         self._interrupt.set()
+        self._cancel_active()
         with self._lock:
             self.state = "awake"
         self.set_pet_state("idle")
+
+    def _cancel_active(self):
+        """掐掉当前正在跑的 LLM 调用。
+
+        睡眠整理的每次模型调用都挂着一个 CancelToken，close 掉连接就能
+        让那次调用立刻抛 CancelledError —— 不然用户要等到读超时才拿回控制权。
+        """
+        token = self._active_token
+        if token is not None:
+            try:
+                token.cancel("wake")
+            except Exception:
+                pass
 
     def mark_activity(self):
         self.last_activity = time.time()
@@ -195,6 +331,7 @@ class SleepCycle:
 
     def wake(self):
         self.last_activity = time.time()
+        self._cancel_active()
         with self._lock:
             if self.state in ("sleeping", "waking"):
                 self._interrupt.set()
@@ -211,7 +348,6 @@ class SleepCycle:
             "mode": self._sleep_config["mode"],
             "tasks": list(self._sleep_config["tasks"]),
             "idle_minutes": self._sleep_config["idle_minutes"],
-            "max_llm_calls": self._sleep_config["max_llm_calls"],
             "last_activity": self.last_activity,
         }
 
@@ -224,7 +360,8 @@ class SleepCycle:
                     break
                 if self.state != "awake":
                     break
-                if not self.is_busy() and time.time() - self.last_activity >= self.IDLE_SECONDS:
+                idle_seconds = self._sleep_config["idle_minutes"] * 60
+                if not self.is_busy() and time.time() - self.last_activity >= idle_seconds:
                     self._enter_sleep()
                     break
                 self._stop_monitor.wait(1)
@@ -250,13 +387,26 @@ class SleepCycle:
                 self.logger("只显示模式，不执行任务")
             elif self._sleep_config["mode"] == "full":
                 self._run_tasks()
+        except Exception as exc:  # noqa: BLE001
+            # 后台任务出错绝不能把状态卡在 sleeping：
+            # 那会让宠物永远显示在睡觉，而且 monitor 线程已经退了，
+            # 用户怎么点都醒不过来。
+            self.logger("睡眠任务出错: %r" % (exc,))
         finally:
             if self._interrupt.is_set():
                 self._finish_wake()
             elif self.state == "sleeping":
                 with self._lock:
                     self.state = "deepsleep"
+                self.set_pet_state("sleep")
                 self.logger("睡眠整理完成，进入 deepsleep")
+            else:
+                # 状态被别处改过（比如 stop()），保证最终是醒着的
+                with self._lock:
+                    if self.state not in ("awake", "deepsleep"):
+                        self.state = "awake"
+                if self.state == "awake":
+                    self.set_pet_state("idle")
 
     def _finish_wake(self):
         with self._lock:
@@ -268,7 +418,6 @@ class SleepCycle:
 
     def _run_tasks(self):
         run_started_at = time.time()
-        self._llm_calls = 0
         transcript, latest_updated_at = self._load_transcript(run_started_at)
         selected = set(self._sleep_config["tasks"])
         if ("memory" in selected or "review" in selected) and transcript:
@@ -277,7 +426,13 @@ class SleepCycle:
                 return
             if ok:
                 state = self._read_state()
-                state["last_consolidated_at"] = run_started_at
+                # 水位线要落在**这批会话最新的更新时间**上，
+                # 不能拿 run_started_at —— 那是"开始整理的时间"，
+                # 会把整理期间新建/更新的会话一并算成"已整理"，永久漏掉。
+                state["last_consolidated_at"] = max(
+                    float(state.get("last_consolidated_at", 0) or 0),
+                    latest_updated_at,
+                )
                 self._write_state(state)
                 self.logger("记忆与对话整理完成")
         if "dream" in selected:
@@ -286,61 +441,21 @@ class SleepCycle:
             self._write_dream(transcript, run_started_at)
 
     def _run_prompt(self, prompt, allowed_tools, write_root=None, write_path=None):
-        self._llm_calls = 0
-        executed_any = False
-        registry, schemas = self._sleep_registry(allowed_tools)
-        messages = [{"role": "system", "content": prompt}]
-        while True:
-            if self._interrupt.is_set():
-                return False
-            result = self.provider.chat(messages, tools=schemas)
-            self._llm_calls += 1
-            calls = result.get("tool_calls") or []
-            if not calls:
-                return True
-            messages.append({
-                "role": "assistant",
-                "content": result.get("content") or "",
-                "tool_calls": calls,
-            })
-            for call in calls:
-                if self._interrupt.is_set():
-                    return False
-                fn = call.get("function", {})
-                name = fn.get("name", "")
-                call_id = call.get("id", "")
-                self.logger("工具调用: " + str(name))
-                try:
-                    arguments = json.loads(fn.get("arguments") or "{}")
-                except (TypeError, json.JSONDecodeError):
-                    arguments = {}
-                if name not in allowed_tools:
-                    output = "Error: tool is not allowed during sleep."
-                elif name == "save_memory" and self._contains_sensitive(arguments.get("content", "")):
-                    output = "Error: sensitive content skipped."
-                elif name == "write_file":
-                    path = str(arguments.get("path") or "")
-                    content = str(arguments.get("content") or "")
-                    if write_path and os.path.abspath(path) != os.path.abspath(write_path):
-                        output = "Error: use the exact dream path: " + str(write_path)
-                    elif write_root and not self._is_safe_write_path(path, write_root):
-                        output = "Error: sleep may only write dream files under data/dreams."
-                    elif self._contains_sensitive(content):
-                        output = "Error: sensitive content skipped."
-                    else:
-                        output = registry.execute(name, arguments)
-                else:
-                    output = registry.execute(name, arguments)
-                output_text = str(output)
-                if not output_text.startswith("Error"):
-                    executed_any = True
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": output_text,
-                })
-        self.logger("达到单任务 LLM 调用上限")
-        return executed_any
+        executor = SleepExecutor(
+            self.provider, self.logger,
+            self._sleep_registry, self._contains_sensitive,
+            self._is_safe_write_path,
+        )
+        return executor.run(
+            prompt, allowed_tools,
+            is_interrupted=lambda: self._interrupt.is_set(),
+            register_token=self._register_token,
+            write_root=write_root, write_path=write_path,
+        )
+
+    def _register_token(self, token):
+        """记录当前在跑的 LLM 调用令牌，好让 wake()/stop() 能立刻掐断。"""
+        self._active_token = token
 
     @staticmethod
     def _contains_sensitive(value):
@@ -377,7 +492,13 @@ class SleepCycle:
         watermark = float(state.get("last_consolidated_at", 0) or 0)
         chunks = []
         latest = watermark
-        for fname in os.listdir(conversations_dir()):
+        try:
+            filenames = os.listdir(conversations_dir())
+        except OSError:
+            # 会话目录还不存在（全新安装、从没聊过）——不是错误，
+            # 以前这里直接抛，把 monitor 线程连带打死，状态卡死在 sleeping。
+            return "", watermark
+        for fname in filenames:
             if not fname.endswith(".json"):
                 continue
             path = os.path.join(conversations_dir(), fname)

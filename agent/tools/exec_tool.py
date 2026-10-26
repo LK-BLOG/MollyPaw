@@ -1,7 +1,22 @@
-"""Exec Tool - Execute shell commands as an agent capability."""
+"""Exec Tool - Execute shell commands as an agent capability.
+
+## 停止语义（0.0.0.2.1 改的）
+
+用户点「停止」时，这条命令**不会被硬杀**，而是转入后台继续跑
+（见 agent/process_manager.py）。原因和好处写在那个模块的文档里，
+一句话：硬杀会丢状态、还会让 UI 卡在"正在停"，而转后台之后
+模型能看到进程、自己决定是留还是杀。
+
+超时（`timeout` 参数）也走同一条路：不再杀掉命令，而是**把它推到后台**
+并告诉模型 pid —— 卡住的命令照样能跑完，但这一轮不再被它拖住。
+"""
 import os
 import re
 import subprocess
+import threading
+import time as _time
+
+from agent.process_manager import manager as bg_manager
 
 
 class ExecTool:
@@ -10,7 +25,7 @@ class ExecTool:
     name = "exec_tool"
     description = "Execute shell commands"
 
-    # 正在跑的子进程，供取消时杀进程树。key=Popen 对象。
+    # 正在跑的子进程，供"全部清理"用。key=Popen 对象。
     _running = set()
     _running_lock = None
 
@@ -19,7 +34,14 @@ class ExecTool:
             "type": "function",
             "function": {
                 "name": "exec_command",
-                "description": "Execute a shell command and return its output. Supports PowerShell and cmd.",
+                "description": (
+                    "Execute a shell command and return its output. "
+                    "Supports PowerShell and cmd. "
+                    "If the command is still running when the timeout is hit, "
+                    "it is moved to the background (you get its pid back) "
+                    "instead of being killed — use process_list / process_kill "
+                    "to deal with it."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -34,7 +56,10 @@ class ExecTool:
                         },
                         "timeout": {
                             "type": "integer",
-                            "description": "Max execution time in seconds. Default 30.",
+                            "description": (
+                                "How many seconds to wait before moving the command "
+                                "to the background. Default 30."
+                            ),
                         },
                     },
                     "required": ["cmd"],
@@ -94,8 +119,6 @@ class ExecTool:
 
     @classmethod
     def _register(cls, proc):
-        import threading
-
         if cls._running_lock is None:
             cls._running_lock = threading.Lock()
         with cls._running_lock:
@@ -110,7 +133,11 @@ class ExecTool:
 
     @classmethod
     def kill_all(cls):
-        """杀掉所有在跑的子进程树。取消时由上层调用。"""
+        """强杀所有在跑的子进程树（真·清理，不是停止）。
+
+        注意：用户点「停止」时**不会**走这里了 —— 停止是转后台。
+        这个方法是给程序退出 / 显式清理用的。
+        """
         from agent.cancel import kill_process_tree
 
         if cls._running_lock is None:
@@ -125,8 +152,8 @@ class ExecTool:
                      timeout: int = 30, cancel=None) -> str:
         """执行命令，支持取消。
 
-        用 Popen 而不是 run，是为了能在用户点"停止"时**真的杀掉进程树**。
-        run() 会一直阻塞到命令自己结束，取消按钮就成了摆设。
+        用 Popen 而不是 run，是为了能在用户点"停止"时把进程**转入后台**
+        （run() 会一直阻塞到命令自己结束，停止按钮就成了摆设）。
 
         cancel 不传时自动从上下文取（agent.cancel.use_token 设置的），
         这样 AgentCore 不需要给所有工具改签名。
@@ -172,61 +199,92 @@ class ExecTool:
             except Exception:
                 pass
 
-        import threading
-        import time as _time
-
         t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks), daemon=True)
         t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks), daemon=True)
         t_out.start()
         t_err.start()
 
         deadline = (_time.time() + timeout) if (timeout and timeout > 0) else None
-        cancelled = False
-        timed_out = False
+        reason = None   # None / "cancelled" / "timeout"
 
         try:
             while proc.poll() is None:
                 if cancel is not None and cancel.cancelled:
-                    cancelled = True
-                    from agent.cancel import kill_process_tree
-
-                    kill_process_tree(proc.pid)
-                    try:
-                        proc.wait(timeout=3)
-                    except Exception:
-                        pass
+                    reason = "cancelled"
                     break
                 if deadline is not None and _time.time() > deadline:
-                    timed_out = True
-                    from agent.cancel import kill_process_tree
-
-                    kill_process_tree(proc.pid)
-                    try:
-                        proc.wait(timeout=3)
-                    except Exception:
-                        pass
+                    reason = "timeout"
                     break
                 _time.sleep(0.05)
         finally:
-            for stream in (proc.stdout, proc.stderr):
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-            t_out.join(timeout=1)
-            t_err.join(timeout=1)
-            self._unregister(proc)
+            if reason is None:
+                # 正常跑完：关管道、等读线程收尾
+                for stream in (proc.stdout, proc.stderr):
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+                t_out.join(timeout=1)
+                t_err.join(timeout=1)
+                self._unregister(proc)
+            else:
+                # 转后台：**不能关管道也不能 kill**，读线程继续持有它
+                self._unregister(proc)
+                self._handoff(proc, cmd, shell, stdout_chunks, stderr_chunks)
 
-        if cancelled:
+        if reason == "cancelled":
             from agent.cancel import CancelledError
 
-            raise CancelledError("command cancelled by user")
+            # 注意：这里抛出去，AgentCore 会回滚本轮历史。
+            # 后台进程的事记在 ProcessManager 里，下一轮通过系统提示摆给模型看。
+            raise CancelledError(
+                "command cancelled by user; it was moved to the background "
+                "(pid %d) instead of being killed — use process_list / "
+                "process_kill to deal with it" % proc.pid
+            )
+
+        if reason == "timeout":
+            tail_out, tail_err, trunc = _tail_text(stdout_chunks, stderr_chunks)
+            note = (
+                "\n[这台命令超过 %ss 还没跑完，已转入后台继续跑，pid=%d]\n"
+                "它没有被杀。想留结果就用 process_list 看输出；"
+                "想停掉就用 process_kill(pid=%d)。"
+                "[Exit code: None]" % (timeout, proc.pid, proc.pid)
+            )
+            body = tail_out
+            if tail_err:
+                body += "\n[STDERR]\n" + tail_err
+            if trunc:
+                body += "\n... (输出过长，只保留尾部)"
+            return (body + note).strip()
 
         output = "".join(stdout_chunks)
         if stderr_chunks:
             output += "\n[STDERR]\n" + "".join(stderr_chunks)
-        if timed_out:
-            output += f"\nError: Command timed out after {timeout}s"
-        elif proc.returncode not in (0, None):
+        if proc.returncode not in (0, None):
             output += f"\n[Exit code: {proc.returncode}]"
         return output.strip() if output.strip() else "(no output)"
+
+    def _handoff(self, proc, cmd, shell, stdout_chunks, stderr_chunks):
+        """把进程交给 ProcessManager 托管。失败也不能影响取消本身。"""
+        try:
+            entry = bg_manager().adopt(
+                proc, cmd, stdout_chunks, stderr_chunks, shell=shell)
+            # 兜底：若进程其实已经退了，托管表里那条立刻标记
+            entry.refresh_exit()
+            return entry
+        except Exception:
+            return None
+
+
+def _tail_text(stdout_chunks, stderr_chunks, max_chars=6000):
+    out = "".join(stdout_chunks)
+    err = "".join(stderr_chunks)
+    trunc = False
+    if len(out) > max_chars:
+        out = out[-max_chars:]
+        trunc = True
+    if len(err) > max_chars:
+        err = err[-max_chars:]
+        trunc = True
+    return out, err, trunc

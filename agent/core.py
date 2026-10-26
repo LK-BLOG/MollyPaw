@@ -64,8 +64,10 @@ class AgentCore:
         "sleep": {
             "mode": "off",
             "tasks": ["memory", "review", "dream"],
-            "idle_minutes": 0.5,
-            "max_llm_calls": 100,
+            # 默认空闲 10 分钟才整理。以前是 0.5（30 秒），基本等于
+            # 用户一走神后台就开始烧 token。
+            "idle_minutes": 10,
+            # 没有 max_llm_calls：睡眠任务的调用次数也不设上限。
         },
         "approval_mode": "prompt_dangerous",
     }
@@ -99,12 +101,23 @@ class AgentCore:
             lines.append(f"- [{category}] {content}{suffix}")
         memory_block = "\n".join(lines) if lines else "（暂无长期记忆）"
         dreams_dir = os.path.join(data_dir(), "dreams")
+        # 后台进程：用户按过停止之后，被转进后台的命令还活着。
+        # 这一段让模型每轮都能看见它们 —— 不然它只能看到一句"被取消"，
+        # 机器上留着什么完全不知道，更不会去杀。
+        bg_block = ""
+        try:
+            from agent.process_manager import manager as _bg
+
+            bg_block = _bg().prompt_block()
+        except Exception:
+            bg_block = ""
         return SYSTEM_PROMPT + (
             "\n## 梦境与记忆\n"
             f"你的梦保存在：{dreams_dir}\n"
             "梦的文件名格式：dream_年份_月份_日期_第几个梦.md，例如 dream_2026_09_14_1.md。\n"
             "以下是全部长期记忆，直接作为已知事实使用：\n"
             + memory_block
+            + bg_block
         )
 
     def _load_config(self) -> dict:

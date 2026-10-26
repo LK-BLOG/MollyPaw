@@ -396,6 +396,58 @@ body {
   font-weight: 600;
 }
 
+/* ---- 后台进程提示 ----
+   停止不再等于杀进程：命令转后台继续跑，这条提示告诉用户它还在，
+   顺手给个"全部终止"的出口。别做得像警告条，它只是个状态。 */
+.bg-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--tan);
+  border-radius: 10px;
+  background: var(--warm-gray);
+  color: var(--deep-brown);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.bg-notice[hidden] { display: none; }
+
+.bg-notice-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--paw-orange);
+  animation: mollypaw-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes mollypaw-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+.bg-notice-text { flex: 1 1 auto; }
+
+.bg-notice-btn {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--mid-brown);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--deep-brown);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+
+.bg-notice-btn:hover { background: var(--mid-brown); color: var(--cream); }
+.bg-notice-btn:disabled { opacity: .55; cursor: default; }
+
 /* 停止中：方块 -> 转圈。
    转圈是"我收到了你的点击、正在打断"的唯一信号，不然按钮看着像没反应。 */
 .stop-btn .icon-busy { display: none; }

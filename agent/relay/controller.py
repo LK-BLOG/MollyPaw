@@ -101,13 +101,12 @@ class RelayController:
         token.cancel(f"stopped by {by}")
         self._log(f"stop requested by {by} (owner was {owner})")
 
-        # 杀掉正在跑的命令行子进程（有的话）
-        try:
-            from agent.tools.exec_tool import ExecTool
-
-            ExecTool.kill_all()
-        except Exception:
-            pass
+        # 注意：这里**故意不再杀子进程**。
+        # 停止的语义是「把正在跑的命令转入后台」（见 agent/process_manager.py），
+        # exec_command 自己的循环会检测到 cancel 并把进程交给 ProcessManager，
+        # 然后由模型用 process_kill 决定杀不杀。
+        # 以前在这里 kill_all() 是硬杀，导致：状态全丢 + UI 卡在"正在停" +
+        # 模型不知道机器上残留了什么。
 
         if self._broadcast:
             try:

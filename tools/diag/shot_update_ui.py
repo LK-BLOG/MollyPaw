@@ -92,6 +92,22 @@ class Handler(BaseHTTPRequestHandler):
                           "url": "https://example.invalid/MollyPaw.exe"},
                 "frozen": True, "error": "",
             })
+        if p == "/api/processes":
+            # 默认没有后台进程；?demo=1 时喂两条，给截图用
+            if "demo=1" in self.path:
+                return self._json({
+                    "ok": True, "count": 2, "items": [
+                        {"pid": 20168,
+                         "cmd": "powershell -NoProfile -Command gradlew.bat assembleRelease",
+                         "alive": True, "age_seconds": 96, "exit_code": None,
+                         "killed_by": None, "stdout": "> Task :app:compileReleaseKotlin",
+                         "stderr": ""},
+                        {"pid": 18444, "cmd": "python tools/fetch_releases.py",
+                         "alive": True, "age_seconds": 21, "exit_code": None,
+                         "killed_by": None, "stdout": "", "stderr": ""},
+                    ],
+                })
+            return self._json({"ok": True, "count": 0, "items": []})
         if p == "/api/version":
             return self._json({"ok": True, "version": "0.0.0.2.0"})
         if p == "/api/relay/available":

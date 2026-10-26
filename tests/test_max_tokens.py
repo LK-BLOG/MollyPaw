@@ -80,7 +80,9 @@ def capture_post():
     box = {}
 
     def install(provider, response_data):
-        def fake_post(path, payload):
+        # 注意 cancel 形参：chat() 现在支持取消（睡眠整理靠它打断），
+        # 桩必须跟着签名走，否则 TypeError。
+        def fake_post(path, payload, cancel=None):
             box["path"] = path
             box["payload"] = payload
             return _FakeResp(response_data)

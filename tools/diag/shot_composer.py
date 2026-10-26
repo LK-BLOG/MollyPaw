@@ -102,14 +102,54 @@ def main():
         snap("composer_stopping.png")
         busy = val("getComputedStyle(document.querySelector('#stop-btn .icon-busy')).display")
 
-        # 4) 切英文，检查 i18n 是否还有中文漏网
+        # 4) 停止之后：命令被转到后台，提示条出现（走真实的 refreshBgNotice 链路）
+        js(
+            "(function(){"
+            "var orig = window.fetch;"
+            "window.fetch = function(u, o){"
+            "  if (String(u).indexOf('/api/processes') === 0) {"
+            "    return Promise.resolve({ json: function(){ return Promise.resolve({"
+            "      ok: true, count: 2, items: ["
+            "        {pid: 20168, cmd: 'gradlew assembleRelease', alive: true},"
+            "        {pid: 18444, cmd: 'fetch_releases.py', alive: true}"
+            "      ] }); } });"
+            "  }"
+            "  return orig(u, o);"
+            "};"
+            "window.refreshBgNotice();"
+            "})();"
+        )
+        time.sleep(0.6)
+        snap("composer_bg_notice.png")
+        bgShown = val("(function(){var b=document.getElementById('bg-notice');"
+                      "return JSON.stringify({hidden: b.hidden,"
+                      "text: document.getElementById('bg-notice-text').textContent,"
+                      "btn: (document.getElementById('bg-kill')||{}).textContent,"
+                      "bg: getComputedStyle(b).backgroundColor});})()")
+
+        # 5) 切英文，检查 i18n 是否还有中文漏网
         js("localStorage.setItem('mollypaw_lang','en'); location.reload();")
         time.sleep(3.5)
         js("var b2=document.getElementById('update-later'); if(b2) b2.click();")
         time.sleep(0.3)
         js("var c2=document.querySelector('.composer'); if(c2) c2.scrollIntoView({block:'center'});")
         time.sleep(0.3)
+        js(
+            "(function(){"
+            "var orig = window.fetch;"
+            "window.fetch = function(u, o){"
+            "  if (String(u).indexOf('/api/processes') === 0) {"
+            "    return Promise.resolve({ json: function(){ return Promise.resolve({"
+            "      ok: true, count: 1, items: [{pid: 777, cmd: 'x', alive: true}] }); } });"
+            "  }"
+            "  return orig(u, o);"
+            "};"
+            "window.refreshBgNotice();"
+            "})();"
+        )
+        time.sleep(0.6)
         snap("composer_en.png")
+        bgEn = val("document.getElementById('bg-notice-text').textContent")
 
         checks = val("JSON.stringify({"
                      "sendSvg: !!document.querySelector('#send-btn svg'),"
@@ -123,6 +163,8 @@ def main():
                      "kbdText: (document.querySelector('.kbd-hint')||{}).textContent"
                      "})")
         print("busy display =", busy)
+        print("bg notice:", bgShown)
+        print("bg notice (en):", bgEn)
         print("checks:", checks)
     finally:
         try:

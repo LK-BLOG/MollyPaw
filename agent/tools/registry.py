@@ -1,4 +1,4 @@
-﻿"""Tool Registry - Manages agent tools and dispatches execution."""
+"""Tool Registry - Manages agent tools and dispatches execution."""
 import json
 
 
@@ -64,4 +64,11 @@ class ToolRegistry:
         except TypeError as exc:
             return f"Error: invalid arguments for '{func_name}': {exc}"
         except Exception as exc:
+            # 取消必须**穿透**，不能被当成"工具执行失败"回给模型。
+            # 被吞掉的后果：用户点了停止，工具报个错，模型以为还能继续，
+            # 下一轮接着调 —— 停止就永远停不下来。
+            from agent.cancel import CancelledError
+
+            if isinstance(exc, CancelledError):
+                raise
             return f"Error executing '{func_name}': {exc}"
