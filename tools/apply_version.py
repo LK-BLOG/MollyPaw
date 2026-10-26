@@ -34,6 +34,23 @@ def git_tag():
         return ""
 
 
+def current_version():
+    """读出仓库里现有的 APP_VERSION。
+
+    CI 的 checkout 默认只取一个 commit、不带 tag，`git describe` 会空;
+    这时候**不该报错退出** —— 非 tag 构建只要沿用现有版本号就行。
+    以前这里直接 SystemExit，于是每次 push main 的打包任务都以
+    「拿不到有效版本号」失败，CI 天天红。
+    """
+    path = os.path.join(ROOT, "agent", "version.py")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            match = re.search(r'APP_VERSION = "([^"]*)"', f.read())
+        return match.group(1) if match else ""
+    except OSError:
+        return ""
+
+
 def write_version(version):
     path = os.path.join(ROOT, "agent", "version.py")
     with open(path, "r", encoding="utf-8") as f:
@@ -74,7 +91,11 @@ def main():
     tag = sys.argv[1] if len(sys.argv) > 1 else git_tag()
     version = normalize_tag(tag)
     if not version or not re.match(r"^\d+(\.\d+)*$", version):
-        raise SystemExit("拿不到有效版本号（tag=%r）" % tag)
+        fallback = current_version()
+        if not fallback:
+            raise SystemExit("拿不到有效版本号（tag=%r）" % tag)
+        print("没有可用 tag（tag=%r），沿用仓库现有版本 %s" % (tag, fallback))
+        version = fallback
     print("version =", version)
     print("wrote", write_version(version))
     banner = write_banner(version)

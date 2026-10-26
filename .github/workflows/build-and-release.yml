@@ -82,11 +82,14 @@ jobs:
         working-directory: MollyPaw
         shell: bash
         run: |
-          # 版本号唯一真源是 tag，写进 agent/version.py 让自动更新能比大小
+          # 版本号唯一真源是 tag，写进 agent/version.py 让自动更新能比大小。
+          # 非 tag 的 main 构建只是验证能打包，**不写版本号** ——
+          # 以前这里无参数调用 apply_version.py，main push 直接以
+          # "拿不到有效版本号（tag=''）" 退出 1，于是每次推 main 都红一片。
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             python tools/apply_version.py "${GITHUB_REF_NAME}"
           else
-            python tools/apply_version.py
+            echo "非 tag 构建，沿用仓库里的版本号：$(python -c 'from agent.version import APP_VERSION; print(APP_VERSION)')"
           fi
       - name: Build
         working-directory: MollyPaw
