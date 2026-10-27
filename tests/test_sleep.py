@@ -285,5 +285,81 @@ class TestPetStateShowsSleep:
         assert api.current_pet_state() == api.pet_state
 
 
+class TestOldConfigMigration:
+    """老用户的 config.json 里 sleep 段还是 0.0.0.2.0 的硬编码值。
+
+    不迁移的话：升级到 0.0.0.2.1 之后 `idle_minutes` 仍然是 0.5（30 秒），
+    界面上改了也不一定生效，等于这个修复对老用户完全没用。
+    """
+
+    def _write_config(self, tmp, sleep_cfg):
+        import json as _json
+
+        from agent.paths import config_path
+
+        with open(config_path(), "w", encoding="utf-8") as f:
+            _json.dump({"api_key": "k", "model": "m", "sleep": sleep_cfg}, f)
+
+    def _read_config(self):
+        import json as _json
+
+        from agent.paths import config_path
+
+        with open(config_path(), encoding="utf-8") as f:
+            return _json.load(f)
+
+    def test_hardcoded_half_minute_migrates_to_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MOLLYPAW_DATA_DIR", str(tmp_path))
+        self._write_config(tmp_path, {
+            "mode": "full", "tasks": ["memory"],
+            "idle_minutes": 0.5, "max_llm_calls": 100,
+        })
+        from agent.core import AgentCore
+
+        agent = AgentCore()
+        assert agent.config["sleep"]["idle_minutes"] == SleepCycle.DEFAULT_IDLE_MINUTES
+        assert "max_llm_calls" not in agent.config["sleep"]
+        # 迁移要落盘
+        on_disk = self._read_config()
+        assert on_disk["sleep"]["idle_minutes"] == SleepCycle.DEFAULT_IDLE_MINUTES
+        assert "max_llm_calls" not in on_disk["sleep"]
+        # 其他字段不能丢
+        assert on_disk["sleep"]["mode"] == "full"
+
+    def test_user_chosen_idle_minutes_is_kept(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MOLLYPAW_DATA_DIR", str(tmp_path))
+        self._write_config(tmp_path, {
+            "mode": "full", "tasks": ["memory"],
+            "idle_minutes": 45, "max_llm_calls": 100,
+        })
+        from agent.core import AgentCore
+
+        agent = AgentCore()
+        assert agent.config["sleep"]["idle_minutes"] == 45
+
+    def test_missing_max_llm_calls_means_already_migrated(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MOLLYPAW_DATA_DIR", str(tmp_path))
+        self._write_config(tmp_path, {
+            "mode": "full", "tasks": ["memory"], "idle_minutes": 20,
+        })
+        from agent.core import AgentCore
+
+        agent = AgentCore()
+        assert agent.config["sleep"]["idle_minutes"] == 20
+
+    def test_default_config_is_not_polluted_by_loaded_config(self, tmp_path, monkeypatch):
+        """dict(DEFAULT_CONFIG) 是浅拷贝，曾经会把类级默认值改掉。"""
+        monkeypatch.setenv("MOLLYPAW_DATA_DIR", str(tmp_path))
+        self._write_config(tmp_path, {
+            "mode": "display_only", "tasks": [],
+            "idle_minutes": 0.5, "max_llm_calls": 7,
+        })
+        from agent.core import AgentCore
+
+        AgentCore()
+        assert AgentCore.DEFAULT_CONFIG["sleep"]["idle_minutes"] == 10
+        assert "max_llm_calls" not in AgentCore.DEFAULT_CONFIG["sleep"]
+
+
 if __name__ == "__main__":
     unittest.main()

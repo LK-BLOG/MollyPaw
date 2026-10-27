@@ -66,8 +66,10 @@ copy /Y README.md dist\README.md >nul 2>&1
 copy /Y BRAND.md dist\BRAND.md >nul 2>&1
 copy /Y CONTRIBUTING.md dist\CONTRIBUTING.md >nul 2>&1
 copy /Y requirements.txt dist\requirements.txt >nul 2>&1
-mkdir dist\config >nul 2>&1
-%PY% -c "import json,os; os.makedirs(r'dist\config',exist_ok=True); json.dump({'sleep':{'mode':'off','tasks':['memory','review','dream'],'idle_minutes':0.5,'max_llm_calls':100}}, open(r'dist\config\default.json','w',encoding='utf-8'), ensure_ascii=False, indent=2)"
+REM 以前这里还会生成 dist\config\default.json，内容是写死的
+REM {"sleep":{"idle_minutes":0.5,"max_llm_calls":100}}。
+REM 两个问题：一是**没有任何代码读它**（真实配置在 %APPDATA%\MollyPaw\config.json），
+REM 二是它带着早就删掉的字段，会让人以为那些配置还在。直接不生成。
 
 echo.
 echo ====================================

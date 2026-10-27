@@ -124,6 +124,12 @@ class AgentCore:
         """Load config from file, falling back to defaults."""
         cfg_path = _cfg_path()
         config = dict(self.DEFAULT_CONFIG)
+        # 必须把 sleep 也拷一份：dict(DEFAULT_CONFIG) 是**浅拷贝**，
+        # config["sleep"] 和类级 DEFAULT_CONFIG["sleep"] 是同一个对象，
+        # 一旦 update() 就把默认值永久改了 —— 后面任何新建的 AgentCore
+        # 拿到的"默认值"其实是被上一个用户配置污染过的。
+        config["sleep"] = dict(self.DEFAULT_CONFIG["sleep"])
+        migrated = False
         if os.path.exists(cfg_path):
             try:
                 with open(cfg_path, 'r', encoding='utf-8') as f:
@@ -140,9 +146,43 @@ class AgentCore:
                     if preset:
                         config["base_url"] = preset["base_url"]
                         config["protocol"] = preset["protocol"]
+                migrated = self._migrate_config(config)
+            except Exception:
+                pass
+        if migrated:
+            # 迁移结果要落盘，否则每次启动都重算一遍（无害但脏）
+            try:
+                with open(cfg_path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
             except Exception:
                 pass
         return config
+
+    @classmethod
+    def _migrate_config(cls, config) -> bool:
+        """把老版本的配置迁移到当前版本。返回 True 表示改动需要写回。
+
+        目前只有一条：睡眠整理的空闲时间。
+        0.0.0.2.0 及更早，`idle_minutes` 在后端被硬编码成 0.5 分钟（30 秒），
+        界面上根本没有这个输入框，所以老配置里任何 <= 0.5 的值都必然是
+        那个硬编码 —— 不迁移的话老用户升级后还是 30 秒就开始跑整理任务烧 token。
+        `max_llm_calls` 也一样：功能已经删了，键留着只会误导。
+        """
+        changed = False
+        sleep_cfg = config.get("sleep")
+        if not isinstance(sleep_cfg, dict):
+            return False
+        if "max_llm_calls" in sleep_cfg:
+            sleep_cfg.pop("max_llm_calls", None)
+            changed = True
+            try:
+                idle_value = float(sleep_cfg.get("idle_minutes", 0.5))
+            except (TypeError, ValueError):
+                idle_value = 0.5
+            if idle_value <= 0.5:
+                sleep_cfg["idle_minutes"] = cls.DEFAULT_CONFIG["sleep"]["idle_minutes"]
+                changed = True
+        return changed
 
     def _create_provider(self):
         """Create the LLM provider based on config."""
